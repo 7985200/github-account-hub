@@ -31,6 +31,7 @@ ok()    { printf "%s\n" "${C_GREEN}  ✓ ${C_RESET}$*"; }
 warn()  { printf "%s\n" "${C_YELLOW}  ! ${C_RESET}$*"; }
 err()   { printf "%s\n" "${C_RED}  ✗ ${C_RESET}$*"; }
 step()  { printf "\n%s\n" "${C_BOLD}${C_MAGENTA}━━ $* ━━${C_RESET}"; }
+hr()    { printf "%s\n" "${C_DIM}────────────────────────────────────────────────${C_RESET}"; }
 
 banner() {
   printf "%s" "${C_CYAN}${C_BOLD}"
