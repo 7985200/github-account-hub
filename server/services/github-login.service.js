@@ -19,11 +19,14 @@
 
 const { fetch, ProxyAgent } = require('undici');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 const proxy = require('./proxy.service');
 const logger = require('../utils/logger');
 
-const ORIGIN = 'https://github.com';
+// 目标站点（可用 GITHUB_WEB_ORIGIN 覆盖，便于自动化测试与 GitHub Enterprise）
+const ORIGIN = process.env.GITHUB_WEB_ORIGIN || 'https://github.com';
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const TOKEN_PATTERN = /ghp_[A-Za-z0-9]{36}/;
@@ -239,6 +242,30 @@ function parseVerifyPage(html, location) {
     }
   }
 
+  // 兜底：GitHub 部分页面为 React 渲染，表单数据内嵌在 <script type="application/json"> 中
+  if (!codeForm) {
+    const embedded = src.match(
+      /<script[^>]*type="application\/json"[^>]*data-target="react-app\.embeddedData"[^>]*>([\s\S]*?)<\/script>/i
+    );
+    if (embedded) {
+      try {
+        const flat = JSON.stringify(JSON.parse(embedded[1]));
+        const token = (flat.match(/"authenticity_token":"([^"]+)"/) || [])[1] || '';
+        const fieldMatch = flat.match(/"(otp|verification_code|user_verification_code|code)"/i);
+        if (token && fieldMatch) {
+          codeForm = {
+            action: location || '/sessions/verified-device',
+            method: 'post',
+            hidden: [{ name: 'authenticity_token', value: token }],
+            codeField: fieldMatch[1],
+          };
+        }
+      } catch {
+        /* 忽略：解析失败则继续走后续兜底 */
+      }
+    }
+  }
+
   // 重发/发送验证码表单（action 或按钮文案含 resend/send code 等）
   let resendForm = null;
   for (const f of forms) {
@@ -388,7 +415,8 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
       // ⑤ 其他未知情况 → 明确说明并给出可操作建议
       throw new WebLoginError(
         'NEED_VERIFY',
-        `登录未完成（GitHub 响应 ${res2.status}${loc ? `，跳转 ${loc}` : ''}）。请稍后重试，或改用「Token 添加」方式。`,
+        `GitHub 要求设备/邮箱验证，但未能自动识别验证页面（响应 ${res2.status}${loc ? `，跳转 ${loc}` : ''}）。` +
+          '可先在浏览器中登录一次该账号后重试，或改用「Token 添加」方式。',
         428
       );
     }
@@ -492,6 +520,23 @@ async function createTokenWithSession({ jar, dispatcher, login, description, tok
 
 /* ----------------------------- 验证续接（邮箱验证码 / 两步验证） ----------------------------- */
 
+/** 保存验证页 HTML 供诊断（解析失败时），返回文件路径 */
+function saveVerifyDebug(html, url, login) {
+  try {
+    fs.mkdirSync(config.dataDir, { recursive: true });
+    const file = path.join(config.dataDir, `verify-debug-${Date.now()}.html`);
+    fs.writeFileSync(
+      file,
+      `<!-- url: ${url}\n     login: ${login}\n     time: ${new Date().toISOString()} -->\n${html}`,
+      'utf8'
+    );
+    return file;
+  } catch (err) {
+    logger.warn('保存验证页诊断文件失败', { error: err.message });
+    return '';
+  }
+}
+
 /** 尝试建立验证会话：访问验证页 → 解析表单 → 必要时自动触发发送验证码 */
 async function tryBuildVerification({ loc, jar, dispatcher, login }) {
   let target = '';
@@ -499,23 +544,40 @@ async function tryBuildVerification({ loc, jar, dispatcher, login }) {
   else if (loc && /sessions|two-factor|verify/i.test(loc)) target = `${ORIGIN}${loc}`;
   else target = `${ORIGIN}/sessions/verified-device`;
 
-  let page;
-  try {
-    page = await request(target, {}, { jar, dispatcher });
-  } catch (err) {
-    logger.warn('验证页访问失败', { target, error: err.message });
-    return null;
+  /* 访问验证页：手动跟随重定向（GitHub 常先 302 到带参数的验证页） */
+  let page = null;
+  let current = target;
+  for (let hop = 0; hop < 6; hop += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      page = await request(current, { headers: { Referer: `${ORIGIN}/login` } }, { jar, dispatcher });
+    } catch (err) {
+      logger.warn('验证页访问失败', { target: current, error: err.message });
+      return null;
+    }
+    if (page.status >= 300 && page.status < 400) {
+      const next = String(page.headers.get('location') || '');
+      if (!next) break;
+      current = next.startsWith('http') ? next : `${ORIGIN}${next}`;
+      continue;
+    }
+    break;
   }
-  if (page.status !== 200) {
-    logger.warn('验证页响应异常', { target, status: page.status });
+  const finalUrl = current;
+
+  if (!page || page.status !== 200) {
+    logger.warn('验证页响应异常', { target: finalUrl, status: page ? page.status : 'n/a' });
+    if (page && page.text) saveVerifyDebug(page.text, finalUrl, login);
     return null;
   }
 
-  const parsed = parseVerifyPage(page.text, loc || target);
+  const parsed = parseVerifyPage(page.text, loc || finalUrl);
   if (!parsed.codeForm) {
+    const debugFile = saveVerifyDebug(page.text, finalUrl, login);
     logger.warn('未能解析出验证码表单', {
-      target,
+      target: finalUrl,
       pageSize: page.text.length,
+      debugFile,
       snippet: page.text.replace(/\s+/g, ' ').slice(0, 200),
     });
     return null;
