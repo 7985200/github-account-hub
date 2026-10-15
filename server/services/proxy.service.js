@@ -15,7 +15,8 @@ const config = require('../config');
 const settings = require('./settings.service');
 const logger = require('../utils/logger');
 
-const WEB_ORIGIN = 'https://github.com';
+// 探测目标（与 github-login 保持一致的 GITHUB_WEB_ORIGIN 覆盖，便于自动化测试）
+const WEB_ORIGIN = process.env.GITHUB_WEB_ORIGIN || 'https://github.com';
 const API_ORIGIN = 'https://api.github.com';
 const UA_BROWSER =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
