@@ -353,7 +353,39 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
       { jar, dispatcher }
     );
 
-    /* 3. 判定登录态：直接尝试打开 Token 创建页（已登录才可访问）
+    /* 3a. 登录响应直接指向验证页（设备验证 / 两步验证）→ 立即建立验证会话
+     *     关键：必须先于 Token 页探测执行 —— 实测在验证待完成时请求未授权的
+     *     /settings/tokens/new 会破坏 GitHub 的验证会话，导致验证页变 404 */
+    const loc2 = String(res2.headers.get('location') || '');
+    if (/verified-device|two-factor|two_factor|sessions\/(verified|two)/i.test(loc2)) {
+      const ctx = await tryBuildVerification({ loc: loc2, jar, dispatcher, login: username });
+      if (ctx) {
+        keepSession = true; // dispatcher 交由验证会话持有，不在 finally 中关闭
+        const verifyId = putPending({
+          jar,
+          dispatcher,
+          login: username,
+          description,
+          channel,
+          verifyType: ctx.verifyType,
+          hint: ctx.hint,
+          codeForm: ctx.codeForm,
+          resendForm: ctx.resendForm,
+          verifyPageUrl: ctx.verifyPageUrl,
+        });
+        logger.info('登录需要额外验证，已建立验证会话', { login: username, verifyType: ctx.verifyType });
+        return {
+          needsVerify: true,
+          verifyId,
+          verifyType: ctx.verifyType,
+          hint: ctx.hint,
+          expiresInSec: Math.floor(VERIFY_TTL_MS / 1000),
+        };
+      }
+      logger.warn('登录响应指向验证页但未能建立验证会话', { login: username, location: loc2 });
+    }
+
+    /* 3b. 判定登录态：直接尝试打开 Token 创建页（已登录才可访问）
      *    —— 不依赖 GitHub 的跳转语义（设备验证/2FA/改版都不会误判），
      *       未通过时再依据登录响应的证据分级给出准确原因 */
     const newPage = await request(`${ORIGIN}/settings/tokens/new`, {}, { jar, dispatcher });
