@@ -267,6 +267,7 @@
             </label>
           </div>
           <div class="tab-pane" data-pane="auto-token" hidden>
+            <div class="at-form-view" id="atFormView">
             <div class="at-intro">
               <p class="at-intro-title">自动换取全权限 Token</p>
               <ul class="at-intro-list">
@@ -292,6 +293,29 @@
               <span class="field-label">邮箱（可选）</span>
               <input id="atEmail" type="email" maxlength="190" placeholder="该账号绑定的邮箱">
             </label>
+            </div><!-- /atFormView -->
+
+            <!-- 验证码续接视图：GitHub 要求额外验证（邮箱验证码 / 两步验证）时显示 -->
+            <div class="at-verify-view" id="atVerifyView" hidden>
+              <div class="at-verify-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="10" width="16" height="10" rx="2.5"></rect>
+                  <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+                  <circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none"></circle>
+                </svg>
+              </div>
+              <p class="at-verify-title">需要安全验证</p>
+              <p class="at-verify-hint" id="atVerifyHint">验证码已发送，请查收后输入</p>
+              <p class="at-verify-note">验证码 10 分钟内有效</p>
+              <input id="atVerifyCode" class="at-code-input mono" type="text" inputmode="numeric" autocomplete="one-time-code"
+                     maxlength="6" placeholder="000000" spellcheck="false" aria-label="验证码">
+              <div class="form-error" id="atVerifyError" hidden></div>
+              <div class="at-verify-actions">
+                <button type="button" class="btn btn-primary" id="atVerifySubmit" disabled>提交验证</button>
+                <button type="button" class="btn btn-ghost" id="atVerifyResend">重新发送验证码</button>
+              </div>
+              <button type="button" class="link-btn at-verify-back" id="atVerifyBack">← 返回重填账号密码</button>
+            </div>
           </div>
           <div class="tab-pane" data-pane="password" hidden>
             <div class="notice">GitHub 已于 2021-08 停用账号密码直连认证。密码将以 AES-256-GCM 加密仅存本机数据库；如需仓库列表、克隆地址等在线能力，请为该账号补充 Token。</div>
