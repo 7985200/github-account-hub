@@ -14,7 +14,7 @@
 services:
   mysql:
     image: mysql:8.0
-    container_name: ghhub-mysql
+    # 不指定 container_name：容器名按项目名（目录名）自动生成，支持同机多实例并存
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-root-2026}
@@ -39,7 +39,7 @@ services:
 
   app:
     build: .
-    container_name: ghhub-app
+    # 不指定 container_name：便于同机部署多个实例（compose -p 或不同目录）
     restart: unless-stopped
     depends_on:
       mysql:
