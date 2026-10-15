@@ -11,9 +11,10 @@ const { encrypt, decrypt, maskSecret, tokenKind } = require('../utils/crypto');
 const logger = require('../utils/logger');
 
 class ApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = '') {
     super(message);
     this.status = status;
+    if (code) this.code = code;
   }
 }
 
@@ -693,10 +694,26 @@ async function createWithAutoToken(payload = {}) {
       await writeLog('account.auto-token', `自动获取 Token 失败：${err.message}`, {
         level: 'warn',
       });
-      throw new ApiError(err.httpStatus || 502, err.message);
+      throw new ApiError(err.httpStatus || 502, err.message, err.code);
     }
     logger.error('自动获取 Token 异常', { login, error: err.message });
     throw new ApiError(502, `自动获取 Token 失败：${err.message}`);
+  }
+
+  // 需要额外验证（邮箱验证码 / 两步验证）→ 交由前端继续交互，不作为错误
+  if (result && result.needsVerify) {
+    await writeLog(
+      'account.auto-token',
+      `自动获取 Token 需要额外验证（${result.verifyType}），已建立验证会话`,
+      { level: 'info' }
+    );
+    return {
+      needsVerify: true,
+      verifyId: result.verifyId,
+      verifyType: result.verifyType,
+      hint: result.hint,
+      expiresInSec: result.expiresInSec,
+    };
   }
 
   // 用拿到的 Token 走标准创建流程（refresh 会真实调用 GitHub API 二次验证）
@@ -717,6 +734,55 @@ async function createWithAutoToken(payload = {}) {
     account,
     meta: { scopes: result.scopes.length, channel: result.channel, durationMs: result.durationMs, note: result.note },
   };
+}
+
+/* ----------------------------- 自动获取 Token：验证码续接 ----------------------------- */
+
+/**
+ * 提交验证码（邮箱验证码 / 两步验证码），继续完成「密码换 Token」
+ * @returns {{account:object, meta:object}}
+ */
+async function verifyAutoToken({ verifyId, code, note, email } = {}) {
+  let result;
+  try {
+    result = await githubLogin.submitVerificationCode({ verifyId, code });
+  } catch (err) {
+    if (err instanceof githubLogin.WebLoginError) {
+      await writeLog('account.auto-token', `验证码验证未通过：${err.message}`, { level: 'warn' });
+      throw new ApiError(err.httpStatus || 502, err.message, err.code);
+    }
+    logger.error('验证码验证异常', { error: err.message });
+    throw new ApiError(502, `验证失败：${err.message}`);
+  }
+
+  const account = await create({
+    mode: 'token',
+    token: result.token,
+    login: result.login,
+    note,
+    email,
+  });
+  await writeLog(
+    'account.auto-token',
+    `验证码通过后自动创建全权限 Token（权限 ${result.scopes.length} 项、永不过期，耗时 ${(result.durationMs / 1000).toFixed(1)}s）`,
+    { accountId: account.id }
+  );
+  return {
+    account,
+    meta: { scopes: result.scopes.length, channel: result.channel, durationMs: result.durationMs, note: result.note },
+  };
+}
+
+/** 重新发送验证码 */
+async function resendAutoToken({ verifyId } = {}) {
+  try {
+    return await githubLogin.resendVerificationCode({ verifyId });
+  } catch (err) {
+    if (err instanceof githubLogin.WebLoginError) {
+      throw new ApiError(err.httpStatus || 502, err.message, err.code);
+    }
+    throw new ApiError(502, `重发失败：${err.message}`);
+  }
 }
 
 /* ----------------------------- 批量复刻（Fork） ----------------------------- */
@@ -887,5 +953,7 @@ module.exports = {
   getTargetUserInfo,
   batchFollow,
   batchFork,
+  verifyAutoToken,
+  resendAutoToken,
   listLogs,
 };
