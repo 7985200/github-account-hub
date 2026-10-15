@@ -48,6 +48,7 @@ const GITHUB_TOKEN = 'ghp_' + 'A'.repeat(36);
 let resendCount = 0;
 let resendBody = '';
 let verifySubmitted = '';
+let sessionBroken = false; // 模拟真实 GitHub：验证待完成时访问未授权的 /settings/tokens/new 会破坏验证会话
 
 /* mock GitHub */
 const server = http.createServer((req, res) => {
@@ -66,6 +67,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (url === '/session' && method === 'POST') {
+      sessionBroken = false; // 新的登录尝试 → 验证会话重新建立
       if (/password=GOODPASS/.test(body)) {
         res.writeHead(302, { Location: '/sessions/verified-device' });
         return res.end();
@@ -78,6 +80,10 @@ const server = http.createServer((req, res) => {
 
     /* 模拟 GitHub 先 302 到带参数的验证页（考验重定向跟随） */
     if (url === '/sessions/verified-device' && method === 'GET') {
+      if (sessionBroken) {
+        res.writeHead(404, { 'Content-Type': 'text/html' });
+        return res.end('<html><title>Page not found · GitHub</title></html>');
+      }
       if (!/anon=1/.test(cookie)) {
         res.writeHead(302, { Location: '/login' });
         return res.end();
@@ -111,6 +117,7 @@ const server = http.createServer((req, res) => {
 
     if (url === '/settings/tokens/new' && method === 'GET') {
       if (!/user_session=/.test(cookie)) {
+        sessionBroken = true; // 关键：破坏验证会话（与真实 GitHub 行为一致）
         res.writeHead(302, { Location: '/login' });
         return res.end();
       }
@@ -128,6 +135,8 @@ const server = http.createServer((req, res) => {
   });
 });
 
+let restoreProxy = null; // 异常退出时也能恢复 web_proxy
+
 (async () => {
   await new Promise((res) => server.listen(3999, res));
   console.log('mock GitHub 已就绪 :3999');
@@ -136,7 +145,7 @@ const server = http.createServer((req, res) => {
   const login = require('../server/services/github-login.service');
   const origProxy = await settings.get('web_proxy');
   await settings.set('web_proxy', 'direct'); // 测试走直连 mock
-  const restore = async () => {
+  restoreProxy = async () => {
     await settings.set('web_proxy', origProxy);
     console.log('（已恢复 web_proxy = ' + origProxy + '）');
   };
@@ -158,6 +167,7 @@ const server = http.createServer((req, res) => {
   check('验证类型为 email', start.verifyType === 'email', start.verifyType);
   check('hint 含脱敏邮箱', /t\*\*\*@example\.com/.test(start.hint || ''), start.hint);
   check('有效期 600 秒', start.expiresInSec === 600);
+  check('验证会话未被破坏（未先请求未授权 Token 页）', sessionBroken === false, 'sessionBroken=' + sessionBroken);
 
   const verifyId = start.verifyId;
 
@@ -194,10 +204,17 @@ const server = http.createServer((req, res) => {
   check('会话已清理 → VERIFY_EXPIRED', err3 && err3.code === 'VERIFY_EXPIRED', err3 && err3.message);
 
   console.log('\n== 测试结果: ' + passed + ' 通过 / ' + failed + ' 失败 ==');
-  await restore();
+  await restoreProxy();
   server.close();
   process.exit(failed ? 1 : 0);
-})().catch((e) => {
+})().catch(async (e) => {
   console.error('测试异常:', e.message);
+  if (restoreProxy) {
+    try {
+      await restoreProxy();
+    } catch {
+      /* 忽略恢复失败 */
+    }
+  }
   process.exit(2);
 });
