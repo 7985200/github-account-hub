@@ -62,6 +62,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/7985200/github-account-hub/m
 > - Docker 模式：自动创建数据库与应用账号、建表、构建镜像并启动，全程无需手动操作
 > - 宿主机模式：需要本机已有 Node.js ≥ 18 与 MySQL 8.0，脚本会引导完成初始化并后台启动
 > - 非交互安装（CI 场景）：`INSTALL_MODE=1 INSTALL_PORT=24524 INSTALL_BIND=0.0.0.0 INSTALL_CONFIRM=1 bash install.sh`
+> - 重复运行会自动识别已部署的项目并询问操作：**重新部署**（保留数据）/ **更新到最新**（拉取仓库最新代码）/ **部署新实例**（克隆到新目录，独立端口与数据，可与旧实例并存）
+> - 非交互模式下可用 `INSTALL_EXISTING=1|2|3` 指定上述操作
 
 ### 方式二：Docker Compose（手动）
 
