@@ -275,16 +275,18 @@ function parseVerifyPage(html, location) {
     }
   }
 
-  // 验证类型：优先依据页面文案（更精确），再退回 URL 特征
+  // 验证类型：从「发送提示句」判断（页面导航等噪声含 mobile/email 等词，不能整页匹配）
   const lower = src.toLowerCase();
   const loc = String(location || '').toLowerCase();
+  const sentSentence = ((src.match(/(?:we |)(?:sent|emailed)[^<]{0,160}/i) || [''])[0] || '').toLowerCase();
+  const probe = sentSentence || lower;
   let verifyType = 'email';
-  if (/authenticator app|authentication app|two-factor authentication app/.test(lower)) {
+  if (/authenticator app|authentication app/.test(probe)) {
     verifyType = 'totp';
-  } else if (/sms|text message|phone number|mobile/.test(lower)) {
-    verifyType = 'sms';
-  } else if (/via email|by email|sent.{0,30}email|check your (email|inbox)|email address/.test(lower)) {
+  } else if (/via email|by email|email to|to your email|email address|check your (email|inbox)/.test(probe)) {
     verifyType = 'email';
+  } else if (/via sms|text message|phone number|mobile number|sms/.test(probe)) {
+    verifyType = 'sms';
   } else if (/two-factor|two_factor|2fa/.test(loc)) {
     verifyType = 'totp';
   }
