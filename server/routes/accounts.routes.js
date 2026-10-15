@@ -5,6 +5,9 @@
  * GET    /api/accounts                列表（q / status / sort）
  * POST   /api/accounts                新增（mode=token 或 password）
  * POST   /api/accounts/auto-token     账号密码登录 GitHub 并自动创建全权限 Token
+ *                                      （需额外验证时返回 428 + 验证会话）
+ * POST   /api/accounts/auto-token/verify  提交验证码继续完成（body: verifyId, code）
+ * POST   /api/accounts/auto-token/resend  重新发送验证码（body: verifyId）
  * GET    /api/accounts/:id            详情
  * PATCH  /api/accounts/:id            更新（note/email/login/token/password）
  * DELETE /api/accounts/:id            删除
@@ -39,8 +42,29 @@ router.post(
 router.post(
   '/auto-token',
   wrap(async (req, res) => {
-    const { account, meta } = await service.createWithAutoToken(req.body || {});
+    const result = await service.createWithAutoToken(req.body || {});
+    // 需要额外验证（邮箱验证码 / 两步验证）：返回 428 + 验证会话，前端切换验证码输入视图
+    if (result && result.needsVerify) {
+      return res.status(428).json({ ok: false, code: 'NEED_VERIFY', ...result });
+    }
+    res.status(201).json({ ok: true, account: result.account, meta: result.meta });
+  })
+);
+
+router.post(
+  '/auto-token/verify',
+  wrap(async (req, res) => {
+    const { verifyId, code, note, email } = req.body || {};
+    const { account, meta } = await service.verifyAutoToken({ verifyId, code, note, email });
     res.status(201).json({ ok: true, account, meta });
+  })
+);
+
+router.post(
+  '/auto-token/resend',
+  wrap(async (req, res) => {
+    const { verifyId } = req.body || {};
+    res.json({ ok: true, ...(await service.resendAutoToken({ verifyId })) });
   })
 );
 
