@@ -94,6 +94,51 @@ if [ -z "$PROJECT_DIR" ]; then
   TARGET_DIR="github-account-hub"
   if [ -d "$TARGET_DIR" ] && [ -f "$TARGET_DIR/server/index.js" ]; then
     ok "检测到已存在的项目目录：$TARGET_DIR"
+
+    # 已有部署 → 询问操作（非交互模式可用 INSTALL_EXISTING=1|2|3 指定，默认 1）
+    ACTION="${INSTALL_EXISTING:-}"
+    if [ -z "$ACTION" ] && [ -n "$NONINT" ]; then
+      ACTION="1"
+    fi
+    if [ -z "$ACTION" ]; then
+      while true; do
+        printf "\n%s\n" "${C_BOLD}检测到该项目已部署过，请选择操作：${C_RESET}"
+        printf "%s\n" "  ${C_GREEN}1${C_RESET}) 重新部署      使用现有源码，保留数据（数据库与配置不变）"
+        printf "%s\n" "  ${C_GREEN}2${C_RESET}) 更新到最新    拉取仓库最新代码后重新部署"
+        printf "%s\n" "  ${C_GREEN}3${C_RESET}) 部署新实例    克隆到新目录（独立端口与数据，可与现有实例并存）"
+        read -rp "输入 1/2/3 [默认 1]: " ACTION
+        ACTION="${ACTION:-1}"
+        case "$ACTION" in 1|2|3) break ;; *) warn "无效输入：$ACTION" ;; esac
+      done
+    fi
+
+    case "$ACTION" in
+      1)
+        ok "使用现有源码重新部署（数据保留）"
+        ;;
+      2)
+        info "拉取仓库最新代码…"
+        if git -C "$TARGET_DIR" pull --ff-only 2>&1 | tail -3; then
+          ok "代码已更新到最新"
+        else
+          warn "更新失败（网络不通或存在本地改动），将继续使用当前代码部署"
+        fi
+        ;;
+      3)
+        BASE_DIR="$TARGET_DIR"
+        N=2
+        while [ -d "${BASE_DIR}-${N}" ]; do N=$((N + 1)); done
+        TARGET_DIR="${BASE_DIR}-${N}"
+        info "克隆新实例到 $TARGET_DIR …"
+        if ! git clone --depth 1 "$REPO_URL.git" "$TARGET_DIR"; then
+          err "克隆失败。若服务器无法访问 github.com，请手动上传源码后运行 bash install.sh"
+          exit 1
+        fi
+        ok "新实例源码就绪"
+        DEFAULT_PORT="24525"
+        warn "新实例请使用与旧实例不同的端口（默认已改为 $DEFAULT_PORT）"
+        ;;
+    esac
   else
     info "未检测到项目源码，正在克隆仓库…"
     info "  $REPO_URL.git"
