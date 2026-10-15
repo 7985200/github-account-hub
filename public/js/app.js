@@ -90,13 +90,20 @@
             return null;
           })
           .then(function (data) {
-            /* 会话失效：统一跳转登录页（login.html 不引本文件，不受影响） */
-            if (res.status === 401) location.replace('/login.html');
+            /* 会话失效：统一跳转登录页（login.html 不引本文件，不受影响）
+               仅认证类错误码触发跳转；业务 401（如验证码错误）不跳转 */
+            if (res.status === 401) {
+              var authCode = data && data.code;
+              if (!authCode || authCode === 'UNAUTHORIZED' || authCode === 'SESSION_EXPIRED') {
+                location.replace('/login.html');
+              }
+            }
             if (!res.ok || !data || data.ok !== true) {
               var msg = (data && data.error) || '请求失败（HTTP ' + res.status + '）';
               var err = new Error(msg);
               err.status = res.status;
               err.code = (data && data.code) || '';
+              err.data = data || null;
               throw err;
             }
             return data;
@@ -728,6 +735,12 @@
 
   /* ----------------------------- 添加账号 ----------------------------- */
   function switchAddTab(tab) {
+    /* 切换 Tab 时退出验证码视图（清理倒计时与会话状态） */
+    clearAtResendTimer();
+    atVerifyState.verifyId = '';
+    atVerifyState.left = 0;
+    $('#atFormView').hidden = false;
+    $('#atVerifyView').hidden = true;
     $$('#addModal .modal-tab').forEach(function (t) {
       var active = t.dataset.tab === tab;
       t.classList.toggle('is-active', active);
@@ -749,6 +762,12 @@
 
   function resetAddForm() {
     $('#addForm').reset();
+    /* 退出验证码视图并清理定时器 */
+    clearAtResendTimer();
+    atVerifyState.verifyId = '';
+    atVerifyState.left = 0;
+    $('#atFormView').hidden = false;
+    $('#atVerifyView').hidden = true;
     switchAddTab('token');
     hideFormError($('#addError'));
   }
@@ -885,12 +904,176 @@
         afterMutation();
       })
       .catch(function (err) {
+        /* GitHub 要求额外验证（邮箱验证码 / 两步验证）→ 切换到验证码输入视图 */
+        if (err && err.code === 'NEED_VERIFY' && err.data && err.data.needsVerify) {
+          showAtVerifyView(err.data);
+          return;
+        }
         showFormError(errEl, autoTokenErrorMessage(err));
       })
       .then(function () {
         clearTimeout(slowTimer);
         setBusy(submitBtn, false);
         updateAtSubmitState();
+      });
+  }
+
+  /* ----------------------------- 密码换 Token：验证码续接 ----------------------------- */
+  var atVerifyState = { verifyId: '', timer: null, left: 0 };
+
+  function clearAtResendTimer() {
+    if (atVerifyState.timer) {
+      clearInterval(atVerifyState.timer);
+      atVerifyState.timer = null;
+    }
+  }
+
+  function updateAtResendBtn() {
+    var btn = $('#atVerifyResend');
+    if (!btn) return;
+    if (atVerifyState.left > 0) {
+      btn.disabled = true;
+      btn.textContent = '重新发送（' + atVerifyState.left + 's）';
+    } else {
+      btn.disabled = false;
+      btn.textContent = '重新发送验证码';
+    }
+  }
+
+  function startAtResendCountdown(seconds) {
+    clearAtResendTimer();
+    atVerifyState.left = seconds;
+    updateAtResendBtn();
+    if (seconds <= 0) return;
+    atVerifyState.timer = setInterval(function () {
+      atVerifyState.left -= 1;
+      if (atVerifyState.left <= 0) {
+        atVerifyState.left = 0;
+        clearAtResendTimer();
+      }
+      updateAtResendBtn();
+    }, 1000);
+  }
+
+  function updateAtVerifySubmit() {
+    var code = ($('#atVerifyCode').value || '').replace(/\D/g, '');
+    $('#atVerifySubmit').disabled = code.length !== 6;
+  }
+
+  /** 切换到验证码视图（后端返回 needsVerify 时） */
+  function showAtVerifyView(data) {
+    atVerifyState.verifyId = (data && data.verifyId) || '';
+    $('#atFormView').hidden = true;
+    $('#atVerifyView').hidden = false;
+    $('#addSubmit').hidden = true;
+    $('#atSubmit').hidden = true;
+    $('#atVerifyHint').textContent = (data && data.hint) || '验证码已发送，请查收后输入';
+    var errEl = $('#atVerifyError');
+    errEl.hidden = true;
+    errEl.textContent = '';
+    $('#atVerifySubmit').hidden = false;
+    $('#atVerifyResend').hidden = false;
+    $('#atVerifyCode').value = '';
+    updateAtVerifySubmit();
+    startAtResendCountdown(0);
+    setTimeout(function () {
+      var input = $('#atVerifyCode');
+      if (input) input.focus();
+    }, 80);
+  }
+
+  /** 返回账号密码输入视图 */
+  function hideAtVerifyView() {
+    $('#atFormView').hidden = false;
+    $('#atVerifyView').hidden = true;
+    var errEl = $('#atVerifyError');
+    errEl.hidden = true;
+    errEl.textContent = '';
+    $('#atVerifyCode').value = '';
+    clearAtResendTimer();
+    atVerifyState.left = 0;
+    atVerifyState.verifyId = '';
+    $('#atVerifySubmit').hidden = false;
+    $('#atVerifyResend').hidden = false;
+    /* 恢复底部按钮：当前处于「密码换 Token」Tab */
+    $('#addSubmit').hidden = true;
+    $('#atSubmit').hidden = false;
+    updateAtSubmitState();
+  }
+
+  function submitAtVerifyCode() {
+    var errEl = $('#atVerifyError');
+    var btn = $('#atVerifySubmit');
+    var code = ($('#atVerifyCode').value || '').replace(/\D/g, '');
+    if (code.length !== 6) return showFormError(errEl, '请输入 6 位验证码');
+    if (!atVerifyState.verifyId) return showFormError(errEl, '验证会话已失效，请返回重新开始');
+    hideFormError(errEl);
+    setBusy(btn, true, '正在验证…');
+
+    api('/api/accounts/auto-token/verify', {
+      method: 'POST',
+      body: {
+        verifyId: atVerifyState.verifyId,
+        code: code,
+        note: $('#atNote').value.trim(),
+        email: $('#atEmail').value.trim()
+      }
+    })
+      .then(function (data) {
+        var meta = data.meta || {};
+        toast(
+          '已通过网页登录创建全权限 Token（' + fmtNum(meta.scopes || 51) + ' 项权限 · 永不过期）',
+          'success',
+          5200
+        );
+        clearAtResendTimer();
+        atVerifyState.verifyId = '';
+        closeModal($('#addModal'));
+        resetAddForm();
+        afterMutation();
+      })
+      .catch(function (err) {
+        if (err && err.code === 'VERIFY_EXPIRED') {
+          showFormError(errEl, err.message || '验证会话已过期，请返回重新开始');
+          $('#atVerifySubmit').hidden = true;
+          $('#atVerifyResend').hidden = true;
+          return;
+        }
+        showFormError(errEl, (err && err.message) || '验证失败，请重试');
+        $('#atVerifyCode').value = '';
+        updateAtVerifySubmit();
+        var input = $('#atVerifyCode');
+        if (input) input.focus();
+      })
+      .then(function () {
+        setBusy(btn, false);
+      });
+  }
+
+  function resendAtVerifyCode() {
+    var btn = $('#atVerifyResend');
+    var errEl = $('#atVerifyError');
+    if (btn.disabled || atVerifyState.left > 0) return;
+    if (!atVerifyState.verifyId) return showFormError(errEl, '验证会话已失效，请返回重新开始');
+    hideFormError(errEl);
+    btn.disabled = true;
+    btn.textContent = '正在发送…';
+
+    api('/api/accounts/auto-token/resend', {
+      method: 'POST',
+      body: { verifyId: atVerifyState.verifyId }
+    })
+      .then(function (data) {
+        toast((data && data.hint) || '验证码已重新发送', 'success');
+        startAtResendCountdown(60);
+        var input = $('#atVerifyCode');
+        if (input) input.focus();
+      })
+      .catch(function (err) {
+        showFormError(errEl, (err && err.message) || '重发失败，请稍后重试');
+        atVerifyState.left = 0;
+        clearAtResendTimer();
+        updateAtResendBtn();
       });
   }
 
@@ -2241,6 +2424,22 @@ var STAR_STATUS_META = {
     $('#addForm').addEventListener('submit', handleAddSubmit);
     $('#atLogin').addEventListener('input', updateAtSubmitState);
     $('#atPassword').addEventListener('input', updateAtSubmitState);
+
+    /* 密码换 Token：验证码续接视图交互 */
+    $('#atVerifyCode').addEventListener('input', function () {
+      var v = this.value.replace(/\D/g, '').slice(0, 6);
+      if (this.value !== v) this.value = v;
+      updateAtVerifySubmit();
+    });
+    $('#atVerifyCode').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (!$('#atVerifySubmit').disabled) submitAtVerifyCode();
+      }
+    });
+    $('#atVerifySubmit').addEventListener('click', submitAtVerifyCode);
+    $('#atVerifyResend').addEventListener('click', resendAtVerifyCode);
+    $('#atVerifyBack').addEventListener('click', hideAtVerifyView);
 
     /* 卡片操作（事件委托）：覆盖账号网格与窄屏详情模态内的卡片 */
     document.addEventListener('click', handleAccountCardAction);
