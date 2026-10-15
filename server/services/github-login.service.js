@@ -94,14 +94,27 @@ function extractCsrf(html) {
   return m ? m[1] : '';
 }
 
+/**
+ * 提取 GitHub 页面 flash 提示文本（错误/警告文案）
+ * 注意：必须校验提取结果非空才返回 —— GitHub 的 flash 容器内常先出现空白文本节点，
+ *       若不过滤会拿到空串并提前返回（历史 bug：导致「密码错误」被误判为未知错误）
+ */
 function extractFlashError(html) {
   const s = String(html);
-  const m = s.match(/flash-error[\s\S]{0,400}?<[^>]*>([^<]{4,220})</i);
-  if (m) return m[1].trim();
-  const m2 = s.match(/js-flash-alert[^>]*>\s*(?:<[^>]+>\s*)?([^<]{4,220})/i);
-  if (m2) return m2[1].trim();
-  const m3 = s.match(/role="alert"[\s\S]{0,300}?([^<]{4,220})</i);
-  return m3 ? m3[1].trim() : '';
+  const patterns = [
+    // 最精确：flash 文本容器（错误/警告文案所在节点）
+    /js-flash-alert[^>]*>\s*(?:<[^>]+>\s*)*([^<]{4,300})/i,
+    // 次选：flash-error 容器内的首个有效文本
+    /flash-error[\s\S]{0,600}?<[^>]*>\s*([^<]{4,300})/i,
+    // 兜底：任意 role=alert 容器
+    /role="alert"[\s\S]{0,400}?([^<]{4,300})</i,
+  ];
+  for (const re of patterns) {
+    const m = s.match(re);
+    const text = m && m[1] ? m[1].replace(/\s+/g, ' ').trim() : '';
+    if (text && text.length >= 4) return text;
+  }
+  return '';
 }
 
 /**
@@ -172,33 +185,36 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
       { jar, dispatcher }
     );
 
-    if (res2.status >= 300 && res2.status < 400) {
+    /* 3. 判定登录态：直接尝试打开 Token 创建页（已登录才可访问）
+     *    —— 不依赖 GitHub 的跳转语义（设备验证/2FA/改版都不会误判），
+     *       未通过时再依据登录响应的证据分级给出准确原因 */
+    const newPage = await request(`${ORIGIN}/settings/tokens/new`, {}, { jar, dispatcher });
+    if (newPage.status !== 200) {
       const loc = String(res2.headers.get('location') || '');
-      if (/two-factor|two_factor|2fa/i.test(loc)) {
+      const flash = res2.status === 200 ? extractFlashError(res2.text) : '';
+      logger.warn('网页登录未通过', {
+        login: username,
+        loginStatus: res2.status,
+        location: loc,
+        flash: flash.slice(0, 140),
+        tokenPageStatus: newPage.status,
+      });
+
+      // ① 明确的密码错误（GitHub 在登录页回显的 flash 文案）
+      if (/incorrect username or password|invalid.{0,12}(login|credentials)/i.test(flash)) {
+        throw new WebLoginError('BAD_CREDENTIALS', '登录失败：账号或密码错误', 401);
+      }
+      // ② 需要额外验证：两步验证 / 设备验证 / 邮箱验证码（GitHub 会跳到 /sessions/* 下）
+      if (/two-factor|two_factor|2fa|verified-device|verify-device/i.test(loc) || /\/sessions\//i.test(loc)) {
         throw new WebLoginError(
-          'TWO_FACTOR',
-          '该账号启用了两步验证（2FA），暂不支持自动登录。请手动创建 Token 后以 Token 方式添加。',
+          'NEED_VERIFY',
+          '该账号登录需要额外验证（两步验证或设备/邮箱验证码）。请先在浏览器中正常登录一次该账号，再回来重试；或改用「Token 添加」方式。',
           428
         );
       }
-      if (/\/login/.test(loc)) {
-        throw new WebLoginError('BAD_CREDENTIALS', '登录失败：账号或密码错误', 401);
-      }
-      if (!jar.has('user_session')) {
-        throw new WebLoginError('BAD_CREDENTIALS', '登录失败：账号或密码错误', 401);
-      }
-    } else if (res2.status === 200) {
-      const page = res2.text;
-      const flash = extractFlashError(page);
-      // 明确的密码错误文案优先判定（避免误伤）
-      if (/incorrect username or password|invalid.{0,12}(login|credentials)|账号或密码/i.test(flash)) {
-        throw new WebLoginError('BAD_CREDENTIALS', '登录失败：账号或密码错误', 401);
-      }
-      // 真正的验证挑战特征（区别于页面 feature flags 中的 captcha 字样）
+      // ③ 人机验证 / 风控
       if (
-        /data-sitekey|octocaptcha-frame|verify-device|unusual activity|suspicious.{0,20}(activity|login)|confirm your (identity|password)/i.test(
-          page
-        )
+        /data-sitekey|octocaptcha-frame|unusual activity|suspicious.{0,20}(activity|login)/i.test(res2.text)
       ) {
         throw new WebLoginError(
           'CAPTCHA',
@@ -206,15 +222,16 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
           403
         );
       }
-      throw new WebLoginError('BAD_CREDENTIALS', `登录失败：${flash || '账号或密码错误'}`, 401);
-    } else {
-      throw new WebLoginError('NETWORK', `登录请求异常（HTTP ${res2.status}）`, 502);
-    }
-
-    /* 3. Token 创建页 */
-    const newPage = await request(`${ORIGIN}/settings/tokens/new`, {}, { jar, dispatcher });
-    if (newPage.status !== 200) {
-      throw new WebLoginError('CREATE_FAILED', `无法打开 Token 创建页（HTTP ${newPage.status}）`, 502);
+      // ④ 有明确的回显文案 → 原样带出
+      if (flash) {
+        throw new WebLoginError('BAD_CREDENTIALS', `登录失败：${flash}`, 401);
+      }
+      // ⑤ 其他未知情况 → 明确说明并给出可操作建议（不再误报为「密码错误」）
+      throw new WebLoginError(
+        'NEED_VERIFY',
+        `登录未完成（GitHub 响应 ${res2.status}${loc ? `，跳转 ${loc}` : ''}）。该账号可能需要额外验证，请先在浏览器中登录一次，或改用「Token 添加」方式。`,
+        428
+      );
     }
     const csrf2 = extractCsrf(newPage.text);
     const scopes = [
