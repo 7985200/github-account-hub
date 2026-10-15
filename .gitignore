@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 运行数据（含密文凭据与加密密钥，绝不提交）
+data/
+logs/
+
+# 免安装版 MySQL（体积过大；请按 README 自行下载，或使用系统 MySQL）
+runtime/mysql/
+runtime/*.zip
+runtime/*.ini
+
+# 环境变量（模板见 .env.example；.env 含真实口令，绝不提交）
+.env
+.env.local
+.env.*.local
+
+# 本地联调临时目录
+.authtest/
+.lianotmp/
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+.forktest/
+.tmpclean/

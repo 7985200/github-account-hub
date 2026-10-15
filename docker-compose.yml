@@ -1,0 +1,75 @@
+# ============================================================
+#  GitHub 多账号管家 · Docker Compose 编排
+#
+#  使用（推荐直接运行仓库自带的一键部署脚本 install.sh）：
+#    cp .env.example .env && vi .env   # 按需修改 DB_PASSWORD 等
+#    docker compose up -d --build
+#
+#  说明：
+#   - MySQL 容器首次启动会自动创建数据库与应用账号（无需 setup-db.js）
+#   - 建表由应用启动时的自动迁移完成
+#   - 加密密钥（data/secret.key）存放于 app-data 卷，请随卷一并备份
+# ============================================================
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ghhub-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-root-2026}
+      MYSQL_DATABASE: ${DB_NAME:-github_hub}
+      MYSQL_USER: ${DB_USER:-ghhub}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-change-ghhub-2026}
+      TZ: ${TZ:-Asia/Shanghai}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 40s
+    networks: [ghhub]
+    # MySQL 仅在 compose 内部网络中，不对外暴露端口
+
+  app:
+    build: .
+    container_name: ghhub-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 24524
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER:-ghhub}
+      DB_PASSWORD: ${DB_PASSWORD:-change-ghhub-2026}
+      DB_NAME: ${DB_NAME:-github_hub}
+      DB_POOL_SIZE: "10"
+      GITHUB_WEB_PROXY: ${GITHUB_WEB_PROXY:-auto}
+      GITHUB_WEB_TIMEOUT: "25000"
+      COOKIE_SECURE: ${COOKIE_SECURE:-auto}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${BIND_IP:-0.0.0.0}:${PORT:-24524}:24524"
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+    networks: [ghhub]
+
+volumes:
+  mysql-data:
+  app-data:
+  app-logs:
+
+networks:
+  ghhub:
+    driver: bridge

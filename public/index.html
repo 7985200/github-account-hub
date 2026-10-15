@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>GitHub 多账号管家</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230a0a0b'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='13' font-weight='700' fill='%23ffffff' text-anchor='middle'%3EGH%3C/text%3E%3C/svg%3E">
+  <script>
+    /* 主题预置：在样式加载前应用，避免首帧闪烁 */
+    (function () {
+      try {
+        var saved = localStorage.getItem('ghhub-theme');
+        document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+      } catch (err) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+  <!-- ================= 启动遮罩：鉴权与首屏渲染完成前隐藏界面 ================= -->
+  <div class="app-boot" id="appBoot">
+    <div class="app-boot-inner">
+      <span class="spinner spinner-lg"></span>
+      <p>正在校验登录状态…</p>
+    </div>
+  </div>
+
+  <!-- ================= 顶栏 ================= -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">GH</div>
+        <div class="brand-text">
+          <h1>GitHub 多账号管家</h1>
+          <p>凭据本地加密 · 多账号统一管理</p>
+        </div>
+      </div>
+
+      <nav class="view-switch" role="tablist" aria-label="视图切换">
+        <button type="button" class="view-tab is-active" role="tab" aria-selected="true" data-view="accounts">账号总览</button>
+        <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="logs">操作日志</button>
+      </nav>
+
+      <div class="topbar-actions">
+        <label class="search" title="搜索登录名 / 备注 / 邮箱">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m20 20-3.5-3.5"></path>
+          </svg>
+          <input id="searchInput" type="search" placeholder="搜索登录名 / 备注 / 邮箱" autocomplete="off">
+        </label>
+        <a class="icon-btn gh-link" href="https://github.com/7985200/github-account-hub" target="_blank" rel="noopener noreferrer" aria-label="GitHub 开源仓库" title="GitHub 开源仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+        <button type="button" class="icon-btn" id="themeToggle" aria-label="切换主题" title="切换主题"></button>
+        <div class="menu-wrap">
+          <button type="button" class="icon-btn" id="menuBtn" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" title="更多操作">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M3 6h18M3 12h18M3 18h18"></path>
+            </svg>
+          </button>
+          <div class="menu-popover" id="menuPopover" role="menu" aria-label="更多操作" hidden>
+            <button type="button" class="menu-item" role="menuitem" data-menu="batch-star">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m12 2.5 2.95 5.98 6.6.96-4.78 4.65 1.13 6.58L12 17.57l-5.9 3.1 1.13-6.58-4.78-4.65 6.6-.96L12 2.5z"></path>
+              </svg>
+              批量 Star 仓库
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-menu="batch-fork">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="6" cy="5.5" r="2.5"></circle>
+                <circle cx="18" cy="5.5" r="2.5"></circle>
+                <circle cx="12" cy="18.5" r="2.5"></circle>
+                <path d="M6 8v1.5a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V8"></path>
+                <path d="M12 12.5v3.5"></path>
+              </svg>
+              批量复刻仓库
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-menu="batch-follow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M19 8v6"></path>
+                <path d="M22 11h-6"></path>
+              </svg>
+              批量关注用户
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-menu="verify-all">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"></circle>
+                <path d="m8.5 12.3 2.4 2.4 4.6-5"></path>
+              </svg>
+              验证全部账号
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-menu="logs">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M8 6h13M8 12h13M8 18h13"></path>
+                <path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"></path>
+              </svg>
+              操作日志
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-menu="health">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+              </svg>
+              系统状态
+            </button>
+            <div class="menu-sep" role="separator"></div>
+            <button type="button" class="menu-item" role="menuitem" data-menu="admin">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              </svg>
+              Admin 账户
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-menu="proxy">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"></circle>
+                <path d="M3 12h18"></path>
+                <path d="M12 3c2.5 2.6 4 5.6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.6-4-9s1.5-6.4 4-9z"></path>
+              </svg>
+              代理设置
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-menu="logout">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <path d="m16 17 5-5-5-5"></path>
+                <path d="M21 12H9"></path>
+              </svg>
+              退出登录
+            </button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary" id="addAccountBtn">＋ 添加账号</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ================= 账号总览 ================= -->
+    <section id="viewAccounts" class="view">
+      <div class="stats-grid" id="statsGrid" aria-label="账号统计"></div>
+
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label class="select-wrap">
+            <span>状态</span>
+            <select id="statusFilter">
+              <option value="">全部状态</option>
+              <option value="active">有效</option>
+              <option value="unverified">未验证</option>
+              <option value="invalid">无效</option>
+              <option value="password-only">仅密码</option>
+              <option value="error">异常</option>
+            </select>
+          </label>
+          <label class="select-wrap">
+            <span>排序</span>
+            <select id="sortSelect">
+              <option value="recent">最近添加</option>
+              <option value="oldest">最早添加</option>
+              <option value="login">登录名 A→Z</option>
+              <option value="verified">最近验证</option>
+            </select>
+          </label>
+        </div>
+        <div class="toolbar-right">
+          <span class="count-text" id="accountCount"></span>
+          <button type="button" class="btn btn-ghost" id="refreshBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+              <path d="M21 3v6h-6"></path>
+            </svg>
+            刷新
+          </button>
+        </div>
+      </div>
+
+      <div class="account-grid" id="accountGrid"></div>
+
+      <div class="empty-state" id="accountsEmpty" hidden>
+        <div class="empty-icon" aria-hidden="true">＋</div>
+        <h2 id="emptyTitle">还没有账号，点右上角添加</h2>
+        <p id="emptySub">支持 Personal Access Token 与账号密码两种凭据，均加密保存在本机数据库。</p>
+      </div>
+
+      <div class="error-panel" id="accountsError" hidden>
+        <div class="error-body">
+          <h3>加载失败</h3>
+          <p id="errorText"></p>
+        </div>
+        <button type="button" class="btn btn-ghost" id="accountsRetry">重试</button>
+      </div>
+    </section>
+
+    <!-- ================= 操作日志 ================= -->
+    <section id="viewLogs" class="view" hidden>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>操作日志</h2>
+          <div class="panel-tools">
+            <label class="select-wrap">
+              <span>级别</span>
+              <select id="logLevel">
+                <option value="">全部</option>
+                <option value="info">info</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </select>
+            </label>
+            <button type="button" class="btn btn-ghost" id="logsRefreshBtn">刷新</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="log-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>账号</th>
+                <th>动作</th>
+                <th>级别</th>
+                <th>明细</th>
+              </tr>
+            </thead>
+            <tbody id="logBody"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button type="button" class="btn btn-ghost" id="logPrev">上一页</button>
+          <span class="faint" id="logPageInfo">第 0 / 0 页</span>
+          <button type="button" class="btn btn-ghost" id="logNext">下一页</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= 添加账号模态 ================= -->
+  <div class="modal-root" id="addModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
+      <div class="modal-head">
+        <h3 id="addModalTitle">添加账号</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-tabs" role="tablist" aria-label="凭据方式">
+        <button type="button" class="modal-tab is-active" data-tab="token" role="tab" aria-selected="true">Token 添加</button>
+        <button type="button" class="modal-tab" data-tab="auto-token" role="tab" aria-selected="false">密码换 Token</button>
+        <button type="button" class="modal-tab" data-tab="password" role="tab" aria-selected="false">账号密码</button>
+      </div>
+      <form id="addForm" novalidate>
+        <div class="modal-body">
+          <div class="tab-pane" data-pane="token">
+            <label class="field">
+              <span class="field-label">Personal Access Token <em>*</em></span>
+              <textarea id="addToken" class="mono" rows="2" placeholder="ghp_… 或 github_pat_…" spellcheck="false" autocomplete="off"></textarea>
+            </label>
+            <label class="field">
+              <span class="field-label">备注</span>
+              <input id="addNote" type="text" maxlength="190" placeholder="例如：工作主账号">
+            </label>
+            <label class="field">
+              <span class="field-label">邮箱（可选）</span>
+              <input id="addEmail" type="email" maxlength="190" placeholder="该账号绑定的邮箱">
+            </label>
+          </div>
+          <div class="tab-pane" data-pane="auto-token" hidden>
+            <div class="at-intro">
+              <p class="at-intro-title">自动换取全权限 Token</p>
+              <ul class="at-intro-list">
+                <li>自动登录 GitHub 并创建一个「全权限 + 永不过期」的 Token（51 项权限）。</li>
+                <li>密码仅用于本次换取 Token，不会保存在本地数据库。</li>
+                <li>需要本地代理可访问 github.com（会自动探测）。</li>
+              </ul>
+            </div>
+            <div class="at-proxy" id="atProxyStatus" hidden></div>
+            <label class="field">
+              <span class="field-label">GitHub 登录名 / 邮箱 <em>*</em></span>
+              <input id="atLogin" type="text" maxlength="120" placeholder="登录名或邮箱" autocomplete="off">
+            </label>
+            <label class="field">
+              <span class="field-label">密码 <em>*</em></span>
+              <input id="atPassword" type="password" placeholder="仅用于本次换取 Token" autocomplete="new-password">
+            </label>
+            <label class="field">
+              <span class="field-label">备注</span>
+              <input id="atNote" type="text" maxlength="190" placeholder="例如：工作主账号">
+            </label>
+            <label class="field">
+              <span class="field-label">邮箱（可选）</span>
+              <input id="atEmail" type="email" maxlength="190" placeholder="该账号绑定的邮箱">
+            </label>
+          </div>
+          <div class="tab-pane" data-pane="password" hidden>
+            <div class="notice">GitHub 已于 2021-08 停用账号密码直连认证。密码将以 AES-256-GCM 加密仅存本机数据库；如需仓库列表、克隆地址等在线能力，请为该账号补充 Token。</div>
+            <label class="field">
+              <span class="field-label">GitHub 登录名 / 邮箱 <em>*</em></span>
+              <input id="addLogin" type="text" maxlength="120" placeholder="登录名或邮箱" autocomplete="off">
+            </label>
+            <label class="field">
+              <span class="field-label">密码 <em>*</em></span>
+              <input id="addPassword" type="password" placeholder="登录密码" autocomplete="new-password">
+            </label>
+            <label class="field">
+              <span class="field-label">备注</span>
+              <input id="addNotePwd" type="text" maxlength="190" placeholder="例如：备用账号">
+            </label>
+            <label class="field">
+              <span class="field-label">邮箱（可选）</span>
+              <input id="addEmailPwd" type="email" maxlength="190" placeholder="该账号绑定的邮箱">
+            </label>
+          </div>
+          <div class="form-error" id="addError" hidden></div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-ghost" data-close>取消</button>
+          <button type="submit" class="btn btn-primary" id="addSubmit">保存并验证</button>
+          <button type="submit" class="btn btn-primary" id="atSubmit" hidden disabled>登录并自动创建 Token</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= 账号详情模态（窄屏点击紧凑卡片打开；置于其他弹层之前，便于编辑/仓库/删除在其上打开） ================= -->
+  <div class="modal-root" id="accountDetailModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accountDetailTitle">
+      <div class="modal-head">
+        <h3 id="accountDetailTitle">账号详情 · <span class="mono faint" id="accountDetailLogin"></span></h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body" id="accountDetailBody"></div>
+    </div>
+  </div>
+
+  <!-- ================= 仓库列表模态 ================= -->
+  <div class="modal-root" id="reposModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="reposTitle">
+      <div class="modal-head">
+        <h3 id="reposTitle">仓库列表 · <span class="mono faint" id="reposLogin"></span></h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="repo-toolbar">
+          <input id="repoFilter" type="search" placeholder="过滤：仓库名 / 语言 / 描述" autocomplete="off">
+          <span class="faint" id="reposCount"></span>
+        </div>
+        <div class="repo-list" id="reposList"></div>
+        <div class="form-error" id="reposError" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 编辑账号模态 ================= -->
+  <div class="modal-root" id="editModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+      <div class="modal-head">
+        <h3 id="editTitle">编辑账号 · <span class="mono faint" id="editAccountLabel"></span></h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <form id="editForm" novalidate>
+        <div class="modal-body">
+          <label class="field">
+            <span class="field-label">备注</span>
+            <input id="editNote" type="text" maxlength="190" placeholder="备注">
+          </label>
+          <label class="field">
+            <span class="field-label">邮箱</span>
+            <input id="editEmail" type="email" maxlength="190" placeholder="邮箱">
+          </label>
+          <label class="field">
+            <span class="field-label">GitHub 登录名</span>
+            <input id="editLogin" type="text" maxlength="120" placeholder="登录名" autocomplete="off">
+          </label>
+          <label class="field">
+            <span class="field-label">新 Token（留空则不更新）</span>
+            <input id="editToken" class="mono" type="text" spellcheck="false" autocomplete="off" placeholder="填写后将覆盖旧 Token 并自动重新验证">
+          </label>
+          <div class="form-error" id="editError" hidden></div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-ghost" data-close>取消</button>
+          <button type="submit" class="btn btn-primary" id="editSubmit">保存修改</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= 删除确认模态 ================= -->
+  <div class="modal-root" id="deleteModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card modal-danger" role="alertdialog" aria-modal="true" aria-labelledby="deleteTitle">
+      <div class="modal-head">
+        <h3 id="deleteTitle">删除账号</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-line">确认删除账号 <strong class="mono" id="deleteLogin"></strong> ？</p>
+        <p class="danger-note">该账号的加密凭据与本地资料快照将被永久移除，此操作不可撤销。GitHub 上的账号本身不受影响。</p>
+        <div class="form-error" id="deleteError" hidden></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" data-close>取消</button>
+        <button type="button" class="btn btn-danger" id="deleteConfirm">确认删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 批量 Star 模态 ================= -->
+  <div class="modal-root" id="batchStarModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="batchStarTitle">
+      <div class="modal-head">
+        <h3 id="batchStarTitle">批量 Star 仓库</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">1</span><span>目标仓库</span></div>
+          <div class="field">
+            <input id="bsRepoInput" type="text" placeholder="owner/repo，或粘贴 GitHub 链接" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="bs-repo-card is-empty" id="bsRepoCard">先填写目标仓库</div>
+        </section>
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">2</span><span>选择执行账号</span></div>
+          <div class="bs-accounts-head">
+            <button type="button" class="btn btn-ghost btn-sm" id="bsSelectAll">全选</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="bsSelectNone">全不选</button>
+            <span class="bs-count faint" id="bsSelectedCount">已选 0 / 0 个可用账号</span>
+          </div>
+          <div class="bs-account-list" id="bsAccountList"></div>
+        </section>
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">3</span><span>执行与结果</span></div>
+          <button type="button" class="btn btn-primary bs-run-btn" id="bsRunBtn" disabled>开始执行（已选 0 个账号）</button>
+          <p class="bs-run-hint" id="bsRunHint" hidden>正在依次操作各账号，可能需要几秒，请勿关闭</p>
+          <div class="bs-results" id="bsResults"></div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 批量关注用户模态 ================= -->
+  <div class="modal-root" id="batchFollowModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="batchFollowTitle">
+      <div class="modal-head">
+        <h3 id="batchFollowTitle">批量关注用户</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">1</span><span>目标用户</span></div>
+          <div class="field">
+            <input id="bfUserInput" type="text" placeholder="用户名、@用户名 或主页链接" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="bs-repo-card is-empty" id="bfUserCard">先填写目标用户</div>
+        </section>
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">2</span><span>选择执行账号</span></div>
+          <div class="bs-accounts-head">
+            <button type="button" class="btn btn-ghost btn-sm" id="bfSelectAll">全选</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="bfSelectNone">全不选</button>
+            <span class="bs-count faint" id="bfSelectedCount">已选 0 / 0 个可用账号</span>
+          </div>
+          <div class="bs-account-list" id="bfAccountList"></div>
+        </section>
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">3</span><span>执行与结果</span></div>
+          <button type="button" class="btn btn-primary bs-run-btn" id="bfRunBtn" disabled>开始关注（已选 0 个账号）</button>
+          <p class="bs-run-hint" id="bfRunHint" hidden>正在依次操作各账号，请勿关闭</p>
+          <div class="bs-results" id="bfResults"></div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 批量复刻仓库模态（与批量 Star 同构，id 前缀 bk） ================= -->
+  <div class="modal-root" id="batchForkModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="batchForkTitle">
+      <div class="modal-head">
+        <h3 id="batchForkTitle">批量复刻仓库</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">1</span><span>目标仓库</span></div>
+          <p class="bs-section-desc">复刻（Fork）目标仓库到所选账号名下，生成各自的独立副本</p>
+          <div class="field">
+            <input id="bkRepoInput" type="text" placeholder="owner/repo，或粘贴 GitHub 链接" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="bs-repo-card is-empty" id="bkRepoCard">先填写目标仓库</div>
+        </section>
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">2</span><span>选择执行账号</span></div>
+          <div class="bs-accounts-head">
+            <button type="button" class="btn btn-ghost btn-sm" id="bkSelectAll">全选</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="bkSelectNone">全不选</button>
+            <span class="bs-count faint" id="bkSelectedCount">已选 0 / 0 个可用账号</span>
+          </div>
+          <div class="bs-account-list" id="bkAccountList"></div>
+        </section>
+
+        <section class="bs-section">
+          <div class="bs-section-head"><span class="bs-step">3</span><span>执行与结果</span></div>
+          <button type="button" class="btn btn-primary bs-run-btn" id="bkRunBtn" disabled>开始复刻（已选 0 个账号）</button>
+          <p class="bs-run-hint" id="bkRunHint" hidden>正在依次复刻到各账号（每个账号需要数秒），请勿关闭页面</p>
+          <div class="bs-results" id="bkResults"></div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 系统状态模态 ================= -->
+  <div class="modal-root" id="healthModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="healthTitle">
+      <div class="modal-head">
+        <h3 id="healthTitle">系统状态</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body" id="healthBody"></div>
+    </div>
+  </div>
+
+  <!-- ================= 管理员账户模态 ================= -->
+  <div class="modal-root" id="adminModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+      <div class="modal-head">
+        <h3 id="adminTitle">Admin 账户</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="adm-identity">
+          <div class="adm-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+          </div>
+          <div class="adm-identity-main">
+            <p class="adm-username mono" id="admUsername">—</p>
+            <p class="adm-lastlogin" id="admLastLogin">上次登录：—</p>
+          </div>
+        </div>
+
+        <section class="adm-section">
+          <h4>重置用户名</h4>
+          <label class="field">
+            <span class="field-label">新用户名</span>
+            <input id="admNewUsername" type="text" maxlength="64" placeholder="2-64 位字母数字._@-" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="field">
+            <span class="field-label">当前密码 <em>*</em></span>
+            <input id="admUsernamePwd" type="password" placeholder="验证身份" autocomplete="current-password">
+          </label>
+          <div class="form-error" id="admUsernameError" hidden></div>
+          <button type="button" class="btn btn-primary adm-btn" id="admUsernameSubmit">更新用户名</button>
+        </section>
+
+        <section class="adm-section">
+          <h4>重置密码</h4>
+          <label class="field">
+            <span class="field-label">新密码 <em>*</em></span>
+            <input id="admNewPassword" type="password" placeholder="至少 8 位" autocomplete="new-password">
+          </label>
+          <label class="field">
+            <span class="field-label">确认新密码 <em>*</em></span>
+            <input id="admNewPassword2" type="password" placeholder="再次输入新密码" autocomplete="new-password">
+          </label>
+          <label class="field">
+            <span class="field-label">当前密码 <em>*</em></span>
+            <input id="admPasswordPwd" type="password" placeholder="验证身份" autocomplete="current-password">
+          </label>
+          <div class="form-error" id="admPasswordError" hidden></div>
+          <button type="button" class="btn btn-primary adm-btn" id="admPasswordSubmit">重置密码</button>
+        </section>
+
+        <p class="adm-hint">修改需验证当前密码；重置密码后其他设备需重新登录</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 代理设置模态 ================= -->
+  <div class="modal-root" id="proxyModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="proxyTitle">
+      <div class="modal-head">
+        <h3 id="proxyTitle">代理设置</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <section class="px-section">
+          <h4>GitHub 网页通道（github.com）</h4>
+          <p class="px-section-sub">选择访问 github.com 的网络通道，保存后即时生效。</p>
+          <div class="px-choice" role="radiogroup" aria-label="网页通道">
+            <label class="px-radio-row">
+              <input type="radio" class="px-radio" name="pxMode" value="auto">
+              <span class="px-radio-body">
+                <span class="px-radio-title">自动探测</span>
+                <span class="px-radio-desc">依次尝试直连与常见本地代理端口</span>
+              </span>
+            </label>
+            <label class="px-radio-row">
+              <input type="radio" class="px-radio" name="pxMode" value="direct">
+              <span class="px-radio-body">
+                <span class="px-radio-title">直连</span>
+                <span class="px-radio-desc">不使用代理，直接访问</span>
+              </span>
+            </label>
+            <label class="px-radio-row">
+              <input type="radio" class="px-radio" name="pxMode" value="custom">
+              <span class="px-radio-body">
+                <span class="px-radio-title">自定义代理</span>
+                <span class="px-radio-desc">手动指定本地或远程代理地址</span>
+              </span>
+            </label>
+          </div>
+          <label class="field px-custom-field" id="pxCustomField">
+            <span class="field-label">代理地址</span>
+            <input id="pxCustomInput" type="text" placeholder="http://127.0.0.1:7897" spellcheck="false" autocomplete="off" disabled>
+          </label>
+          <div class="px-test-row">
+            <button type="button" class="btn btn-ghost" id="pxTestBtn">测试连通性</button>
+            <span class="faint">目标 · github.com</span>
+          </div>
+          <div class="px-result" id="pxTestResult" hidden></div>
+        </section>
+
+        <section class="px-section">
+          <h4>API 通道（api.github.com）</h4>
+          <label class="px-toggle-row">
+            <input type="checkbox" class="bs-checkbox" id="pxApiVia">
+            <span class="px-toggle-body">
+              <span class="px-toggle-title">API 请求也走网页通道的代理</span>
+              <span class="px-toggle-desc">服务器无法直连 api.github.com 时开启；GitHub API 与网页域名不同，网络可达性可能不同</span>
+            </span>
+          </label>
+        </section>
+
+        <p class="px-current faint" id="pxWebCurrent"></p>
+        <div class="form-error" id="pxError" hidden></div>
+
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" data-close>取消</button>
+        <button type="button" class="btn btn-primary" id="pxSaveBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 退出登录确认模态 ================= -->
+  <div class="modal-root" id="logoutModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="logoutTitle">
+      <div class="modal-head">
+        <h3 id="logoutTitle">退出登录</h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-line">确认退出当前管理员账号 <strong class="mono" id="logoutUser"></strong> ？</p>
+        <p class="danger-note">退出后需要重新登录才能访问管理界面；其他设备上的登录状态不受影响。</p>
+        <div class="form-error" id="logoutError" hidden></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" data-close>取消</button>
+        <button type="button" class="btn btn-primary" id="logoutConfirm">退出登录</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= Toast ================= -->
+  <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

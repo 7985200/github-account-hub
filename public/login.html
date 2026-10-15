@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>登录 · GitHub 多账号管家</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230a0a0b'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='13' font-weight='700' fill='%23ffffff' text-anchor='middle'%3EGH%3C/text%3E%3C/svg%3E">
+  <script>
+    /* 主题预置：在样式加载前应用，避免首帧闪烁 */
+    (function () {
+      try {
+        var saved = localStorage.getItem('ghhub-theme');
+        document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+      } catch (err) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="login-body">
+
+  <button type="button" class="icon-btn login-theme" id="loginThemeToggle" aria-label="切换主题" title="切换主题"></button>
+
+  <main class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo" aria-hidden="true">GH</div>
+      <h1 class="login-title" id="loginTitle">GitHub 多账号管家</h1>
+      <p class="login-sub">多账号集中管理 · 本地优先</p>
+
+      <div class="login-loading" id="loginLoading">
+        <span class="spinner spinner-lg"></span>
+        <span>正在检查站点状态…</span>
+      </div>
+
+      <div class="login-error" id="loginError" hidden></div>
+      <div class="login-retry" id="loginRetryRow" hidden>
+        <button type="button" class="btn btn-ghost" id="loginRetryBtn">重试</button>
+      </div>
+
+      <form class="login-form" id="loginForm" novalidate hidden>
+        <p class="login-note" id="loginNote" hidden>首次使用，请设置本站管理员账号（与 GitHub 账号无关）</p>
+        <label class="field">
+          <span class="field-label">用户名</span>
+          <input id="lgUsername" type="text" maxlength="64" placeholder="用户名" autocomplete="username" spellcheck="false">
+        </label>
+        <label class="field">
+          <span class="field-label">密码</span>
+          <input id="lgPassword" type="password" placeholder="密码" autocomplete="current-password">
+        </label>
+        <label class="field" id="lgConfirmField" hidden>
+          <span class="field-label">确认密码</span>
+          <input id="lgConfirm" type="password" placeholder="再次输入密码" autocomplete="new-password">
+        </label>
+        <button type="submit" class="btn btn-primary login-submit" id="lgSubmit">登 录</button>
+      </form>
+
+      <p class="login-foot faint">凭据仅保存在本机服务器 · 请妥善保管管理员密码</p>
+      <p class="login-foot"><a class="login-gh" href="https://github.com/7985200/github-account-hub" target="_blank" rel="noopener noreferrer" aria-label="GitHub 开源仓库" title="GitHub 开源仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" width="20" height="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a></p>
+    </div>
+  </main>
+
+  <script>
+    /* 登录 / 初始化页：独立于 app.js，仅使用公开的认证接口 */
+    (function () {
+      'use strict';
+
+      var THEME_KEY = 'ghhub-theme';
+      var SUN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>';
+      var MOON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
+
+      var mode = 'login';
+      var submitting = false;
+
+      function $(sel) {
+        return document.querySelector(sel);
+      }
+
+      function applyTheme(theme) {
+        var t = theme === 'light' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+        try { localStorage.setItem(THEME_KEY, t); } catch (err) { /* 忽略存储异常 */ }
+        var btn = $('#loginThemeToggle');
+        if (btn) {
+          btn.innerHTML = t === 'dark' ? SUN_SVG : MOON_SVG;
+          btn.title = t === 'dark' ? '切换到浅色主题' : '切换到深色主题';
+        }
+      }
+
+      function showError(msg, warn) {
+        var el = $('#loginError');
+        el.textContent = msg;
+        el.className = 'login-error' + (warn ? ' is-warn' : '');
+        el.hidden = false;
+      }
+
+      function hideError() {
+        var el = $('#loginError');
+        el.hidden = true;
+        el.textContent = '';
+        el.className = 'login-error';
+      }
+
+      /** 认证接口封装：成功返回 {ok:true,...}，失败抛出带 status / code 的错误 */
+      function request(path, body) {
+        var init = { method: body === undefined ? 'GET' : 'POST', headers: {} };
+        if (body !== undefined) {
+          init.headers['Content-Type'] = 'application/json';
+          init.body = JSON.stringify(body);
+        }
+        return fetch(path, init).then(
+          function (res) {
+            return res
+              .json()
+              .catch(function () {
+                return null;
+              })
+              .then(function (data) {
+                if (!res.ok || !data || data.ok !== true) {
+                  var err = new Error((data && data.error) || '请求失败（HTTP ' + res.status + '）');
+                  err.status = res.status;
+                  err.code = (data && data.code) || '';
+                  throw err;
+                }
+                return data;
+              });
+          },
+          function () {
+            throw new Error('无法连接服务端，请确认服务已启动');
+          }
+        );
+      }
+
+      function setBusy(busy, text) {
+        var btn = $('#lgSubmit');
+        if (busy) {
+          btn.disabled = true;
+          btn.innerHTML = '<span class="spinner"></span><span>' + text + '</span>';
+        } else {
+          btn.disabled = false;
+          btn.textContent = mode === 'setup' ? '创建并进入' : '登 录';
+        }
+      }
+
+      /** 按站点初始化状态切换登录 / 初始化模式 */
+      function applyMode(initialized) {
+        mode = initialized ? 'login' : 'setup';
+        var isSetup = mode === 'setup';
+        $('#loginTitle').textContent = isSetup ? '创建管理员账号' : 'GitHub 多账号管家';
+        $('#loginNote').hidden = !isSetup;
+        $('#lgConfirmField').hidden = !isSetup;
+        $('#lgPassword').setAttribute('autocomplete', isSetup ? 'new-password' : 'current-password');
+        $('#lgSubmit').textContent = isSetup ? '创建并进入' : '登 录';
+        $('#loginLoading').hidden = true;
+        $('#loginForm').hidden = false;
+        setTimeout(function () {
+          $('#lgUsername').focus();
+        }, 60);
+      }
+
+      function loadStatus() {
+        submitting = false;
+        $('#loginLoading').hidden = false;
+        $('#loginForm').hidden = true;
+        $('#loginRetryRow').hidden = true;
+        hideError();
+        request('/api/auth/status')
+          .then(function (data) {
+            if (data.initialized && data.loggedIn) {
+              location.replace('/');
+              return;
+            }
+            applyMode(!!data.initialized);
+          })
+          .catch(function (err) {
+            $('#loginLoading').hidden = true;
+            $('#loginRetryRow').hidden = false;
+            showError(err.message, false);
+          });
+      }
+
+      function handleSubmit(event) {
+        event.preventDefault();
+        if (submitting) return;
+        hideError();
+        var username = $('#lgUsername').value.trim();
+        var password = $('#lgPassword').value;
+        var isSetup = mode === 'setup';
+
+        if (!username) return showError('请填写用户名');
+        if (!password) return showError('请填写密码');
+        if (isSetup) {
+          if (password.length < 8) return showError('密码至少 8 位');
+          if (password !== $('#lgConfirm').value) return showError('两次输入的密码不一致');
+        }
+
+        submitting = true;
+        setBusy(true, isSetup ? '正在创建…' : '正在登录…');
+        request(isSetup ? '/api/auth/setup' : '/api/auth/login', { username: username, password: password })
+          .then(function () {
+            location.replace('/');
+          })
+          .catch(function (err) {
+            /* 429 为连续失败锁定，使用虚线警示样式突出提示 */
+            showError(err.message, err.status === 429);
+            submitting = false;
+            setBusy(false);
+          });
+      }
+
+      /* ----------------------------- 启动 ----------------------------- */
+      function init() {
+        applyTheme(document.documentElement.getAttribute('data-theme') || 'dark');
+        $('#loginThemeToggle').addEventListener('click', function () {
+          var current = document.documentElement.getAttribute('data-theme');
+          applyTheme(current === 'dark' ? 'light' : 'dark');
+        });
+        $('#loginForm').addEventListener('submit', handleSubmit);
+        $('#loginRetryBtn').addEventListener('click', loadStatus);
+        loadStatus();
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    })();
+  </script>
+</body>
+</html>

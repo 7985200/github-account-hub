@@ -1,0 +1,26 @@
+# 依赖与本地产物（镜像内重新安装）
+node_modules/
+
+# 本机免安装版 MySQL 与运行数据（Docker 中由官方镜像 + 数据卷承担）
+runtime/
+data/
+logs/
+
+# 环境变量与密钥（一律通过 compose 环境变量/卷注入，绝不打进镜像）
+.env
+.env.*
+data/secret.key
+
+# 版本控制与文档辅助
+.git
+.gitignore
+
+# 本地调试残留
+.authtest/
+.lianotmp*/
+.uifix/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
