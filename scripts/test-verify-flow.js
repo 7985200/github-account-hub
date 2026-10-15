@@ -166,6 +166,7 @@ let restoreProxy = null; // 异常退出时也能恢复 web_proxy
   check('verifyId 生成', /^v_[a-f0-9]{24}$/.test(start.verifyId || ''), start.verifyId);
   check('验证类型为 email', start.verifyType === 'email', start.verifyType);
   check('hint 含脱敏邮箱', /t\*\*\*@example\.com/.test(start.hint || ''), start.hint);
+  check('hint 为中文提示', /验证码已发送至邮箱/.test(start.hint || ''), start.hint);
   check('有效期 600 秒', start.expiresInSec === 600);
   check('验证会话未被破坏（未先请求未授权 Token 页）', sessionBroken === false, 'sessionBroken=' + sessionBroken);
 
