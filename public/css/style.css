@@ -3053,3 +3053,96 @@ a.icon-btn svg {
 .login-gh:hover {
   opacity: 1;
 }
+
+/* ---------------- 密码换 Token：验证码续接视图（八期） ---------------- */
+.at-verify-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 4px 4px;
+  text-align: center;
+}
+.at-verify-icon {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  margin-bottom: 14px;
+  color: var(--text);
+}
+.at-verify-icon svg {
+  width: 26px;
+  height: 26px;
+}
+.at-verify-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+.at-verify-hint {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-2);
+  margin: 0 0 4px;
+  word-break: break-word;
+}
+.at-verify-note {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0 0 18px;
+}
+.at-code-input {
+  width: 208px;
+  height: 54px;
+  text-align: center;
+  font-size: 24px;
+  letter-spacing: 8px;
+  text-indent: 8px;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.at-code-input::placeholder {
+  color: var(--text-3);
+  letter-spacing: 8px;
+}
+.at-code-input:focus {
+  border-color: var(--text);
+}
+.at-verify-view .form-error {
+  margin-top: 12px;
+  width: 100%;
+  max-width: 280px;
+}
+.at-verify-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 240px;
+  margin-top: 16px;
+}
+.at-verify-actions .btn {
+  width: 100%;
+}
+.at-verify-back {
+  margin-top: 14px;
+  font-size: 12px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 8px;
+  transition: color var(--dur-fast) var(--ease);
+}
+.at-verify-back:hover {
+  color: var(--text);
+}
