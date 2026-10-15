@@ -275,25 +275,36 @@ function parseVerifyPage(html, location) {
     }
   }
 
-  // 验证类型：两步验证（验证器 App / 短信） vs 设备/邮箱验证
+  // 验证类型：优先依据页面文案（更精确），再退回 URL 特征
   const lower = src.toLowerCase();
   const loc = String(location || '').toLowerCase();
   let verifyType = 'email';
-  if (/two-factor|two_factor|2fa/.test(loc) || /authenticator app|authentication code|two-factor/.test(lower)) {
-    verifyType = /sms|text message|phone/.test(lower) ? 'sms' : 'totp';
+  if (/authenticator app|authentication app|two-factor authentication app/.test(lower)) {
+    verifyType = 'totp';
+  } else if (/sms|text message|phone number|mobile/.test(lower)) {
+    verifyType = 'sms';
+  } else if (/via email|by email|sent.{0,30}email|check your (email|inbox)|email address/.test(lower)) {
+    verifyType = 'email';
+  } else if (/two-factor|two_factor|2fa/.test(loc)) {
+    verifyType = 'totp';
   }
 
   // 是否已自动发送过验证码
   const alreadySent = /we (sent|emailed)|sent a (code|message)|has been sent|check your (email|inbox)/i.test(src);
 
-  // 提示文案：尽量提取 GitHub 的原文（含脱敏邮箱）
+  // 中文提示（提取脱敏邮箱，不直接透出 GitHub 英文原文）
+  // 注意：GitHub 页面上的邮箱可能本身已脱敏（含 * 字符），正则需兼容
+  const emailMatch = src.match(/[a-zA-Z0-9._%+*-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  const maskedEmail = emailMatch ? maskEmail(emailMatch[0]) : '';
   let hint = '';
-  const sentLine = src.match(/((?:we |)(?:sent|emailed)[^<]{0,120}(?:code|link)[^<]{0,120})/i);
-  if (sentLine) hint = sentLine[1].replace(/\s+/g, ' ').trim().slice(0, 160);
-  const emailMatch = src.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  if (emailMatch) {
-    const masked = maskEmail(emailMatch[0]);
-    hint = hint ? `${hint}（${masked}）` : `验证码已发送至 ${masked}`;
+  if (verifyType === 'totp') {
+    hint = '请输入两步验证器（Authenticator App）中的 6 位验证码';
+  } else if (verifyType === 'sms') {
+    hint = '验证码已发送至该账号绑定的手机号，请查收后输入';
+  } else {
+    hint = maskedEmail
+      ? `验证码已发送至邮箱 ${maskedEmail}，请查收后输入`
+      : '验证码已发送至该账号绑定的邮箱，请查收后输入';
   }
 
   return { codeForm, resendForm, verifyType, hint, alreadySent };
