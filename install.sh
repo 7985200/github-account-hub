@@ -61,9 +61,53 @@ if [ ! -t 0 ] && [ -z "$NONINT" ]; then
   exit 1
 fi
 
-cd "$(dirname "$0")"
-
 banner
+
+# ---------------- 定位项目源码 ----------------
+# 三种运行方式都能正确工作：
+#   1) clone 后在项目目录内运行： bash install.sh
+#   2) 指定路径运行：             bash /path/to/install.sh
+#   3) 免 clone 一键运行：        bash <(curl -fsSL .../install.sh)  ← 自动克隆源码
+step "准备项目源码"
+
+PROJECT_DIR=""
+SELF="${BASH_SOURCE[0]:-}"
+
+# 1) 当前目录已是项目
+if [ -f "server/index.js" ] && [ -f "docker-compose.yml" ]; then
+  PROJECT_DIR="$PWD"
+# 2) 脚本自身所在目录是项目（排除 /dev/fd/* 等进程替换与管道场景）
+elif [ -n "$SELF" ] && [ -f "$SELF" ] && [[ "$SELF" != /dev/fd/* ]] && [[ "$SELF" != /dev/stdin ]]; then
+  SELF_DIR="$(cd "$(dirname "$SELF")" 2>/dev/null && pwd || true)"
+  if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/server/index.js" ]; then
+    PROJECT_DIR="$SELF_DIR"
+  fi
+fi
+
+# 3) 无源码 → 自动克隆仓库（免 clone 一键模式）
+if [ -z "$PROJECT_DIR" ]; then
+  if ! command -v git >/dev/null 2>&1; then
+    err "未检测到项目源码，且系统缺少 git，无法自动获取。"
+    info "请手动下载源码后运行：git clone $REPO_URL.git && cd github-account-hub && bash install.sh"
+    exit 1
+  fi
+  TARGET_DIR="github-account-hub"
+  if [ -d "$TARGET_DIR" ] && [ -f "$TARGET_DIR/server/index.js" ]; then
+    ok "检测到已存在的项目目录：$TARGET_DIR"
+  else
+    info "未检测到项目源码，正在克隆仓库…"
+    info "  $REPO_URL.git"
+    if ! git clone --depth 1 "$REPO_URL.git" "$TARGET_DIR"; then
+      err "克隆失败。若服务器无法访问 github.com，请手动下载源码上传后运行 bash install.sh"
+      exit 1
+    fi
+    ok "源码克隆完成"
+  fi
+  PROJECT_DIR="$PWD/$TARGET_DIR"
+fi
+
+cd "$PROJECT_DIR"
+ok "项目目录：$PROJECT_DIR"
 
 # ---------------- 收集部署参数 ----------------
 step "部署配置"
