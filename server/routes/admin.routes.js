@@ -57,8 +57,10 @@ router.get(
     const all = await settings.getAll();
     res.json({
       ok: true,
-      webProxy: all.web_proxy,
+      webProxy: proxy.maskProxy(all.web_proxy),
       apiViaProxy: all.api_via_proxy === '1',
+      proxyUser: all.web_proxy_user || '',
+      hasProxyPass: !!(all.web_proxy_pass || ''),
       defaults: settings.defaults(),
       candidates: ['direct', ...config.webLogin.proxyCandidates],
     });
@@ -73,12 +75,39 @@ router.put(
     if (!proxy.validateProxyConfig(webProxy)) {
       return res.status(400).json({ ok: false, error: '代理地址格式不正确（示例：http://127.0.0.1:7897，或 auto / direct）' });
     }
-    await settings.set('web_proxy', webProxy);
+    /* 地址里内联的 user:pass@ 拆到独立字段保存，web_proxy 只留无凭据地址，
+       否则 GET /proxy 会把密码原样回显到前端 */
+    let storedProxy = webProxy;
+    const incomingUser = body.proxyUser === undefined ? (await settings.get('web_proxy_user')) || '' : String(body.proxyUser || '').trim();
+    let incomingPass = body.proxyPass === undefined ? (await settings.get('web_proxy_pass')) || '' : String(body.proxyPass || '');
+    try {
+      const parsed = new URL(webProxy);
+      if (parsed.username || parsed.password) {
+        if (body.proxyUser === undefined) incomingUser = decodeURIComponent(parsed.username);
+        if (body.proxyPass === undefined) incomingPass = decodeURIComponent(parsed.password);
+        parsed.username = '';
+        parsed.password = '';
+        storedProxy = parsed.toString().replace(/\/$/, '');
+      }
+    } catch {
+      /* auto / direct 不需要解析 */
+    }
+    await settings.set('web_proxy', storedProxy);
     await settings.set('api_via_proxy', body.apiViaProxy ? '1' : '0');
+    /* 代理认证：用户名直接存；密码未传（undefined）表示「保持不变」 */
+    if (body.proxyUser !== undefined) await settings.set('web_proxy_user', String(body.proxyUser || '').trim());
+    if (body.proxyPass !== undefined) await settings.set('web_proxy_pass', String(body.proxyPass || ''));
     proxy.invalidateChannelCache();
     await proxy.checkChannel().catch(() => null); // 预热一次
     const all = await settings.getAll();
-    res.json({ ok: true, webProxy: all.web_proxy, apiViaProxy: all.api_via_proxy === '1' });
+    const fresh = await settings.getAll();
+    res.json({
+      ok: true,
+      webProxy: fresh.web_proxy,
+      apiViaProxy: fresh.api_via_proxy === '1',
+      proxyUser: fresh.web_proxy_user || '',
+      hasProxyPass: !!(fresh.web_proxy_pass || ''),
+    });
   })
 );
 
@@ -86,10 +115,15 @@ router.post(
   '/proxy/test',
   wrap(async (req, res) => {
     const body = req.body || {};
-    const webProxy = proxy.normalizeProxy(body.webProxy) || 'auto';
+    let webProxy = proxy.normalizeProxy(body.webProxy) || 'auto';
     if (!proxy.validateProxyConfig(webProxy)) {
-      return res.status(400).json({ ok: false, error: '代理地址格式不正确（示例：http://127.0.0.1:7897，或 auto / direct）' });
+      return res.status(400).json({
+        ok: false,
+        error: '代理地址格式不正确（示例：http://127.0.0.1:7897、socks5://127.0.0.1:1080，或 auto / direct）',
+      });
     }
+    /* 测试时也要带上认证信息，否则测的还是无认证通道 */
+    webProxy = proxy.injectAuth(webProxy, body.proxyUser, body.proxyPass);
     const web = await proxy.testChannelConfig(webProxy);
     res.json({ ok: true, web, target: 'github.com' });
   })

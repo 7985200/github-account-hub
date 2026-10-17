@@ -1,13 +1,9 @@
--- ============================================================
---  GitHub 多账号管家 · 数据库结构
---  MySQL 8.0 / utf8mb4
--- ============================================================
+-- GitHub 多账号管家 · 数据库结构
+-- MySQL 8.0 / utf8mb4
 
 SET NAMES utf8mb4;
 
--- ------------------------------------------------------------
 -- 账号表：凭据一律以密文存储（AES-256-GCM，密钥独立于数据库）
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `accounts` (
   `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
   `mode`             ENUM('token','password') NOT NULL DEFAULT 'token' COMMENT '凭据方式',
@@ -33,9 +29,7 @@ CREATE TABLE IF NOT EXISTS `accounts` (
   KEY `idx_accounts_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='GitHub 账号表';
 
--- ------------------------------------------------------------
 -- 操作日志表：记录每一次增删改、验证、拉取等动作
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `activity_logs` (
   `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
   `account_id` BIGINT UNSIGNED NULL COMMENT '关联账号，账号删除后置空',
@@ -51,10 +45,8 @@ CREATE TABLE IF NOT EXISTS `activity_logs` (
     REFERENCES `accounts` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='操作日志表';
 
--- ------------------------------------------------------------
 -- 管理员账号表：登录本站的管理员（与 GitHub 账号无关）
 -- 密码以 scrypt 加盐哈希存储，不可逆
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `admin_users` (
   `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
   `username`      VARCHAR(64)  NOT NULL COMMENT '登录用户名',
@@ -66,9 +58,7 @@ CREATE TABLE IF NOT EXISTS `admin_users` (
   UNIQUE KEY `uk_admin_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='管理员账号表';
 
--- ------------------------------------------------------------
 -- 管理员会话表：登录态（httpOnly Cookie 携带，服务端可撤销）
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `admin_sessions` (
   `token`        CHAR(64)     NOT NULL COMMENT '会话令牌（32字节随机 hex）',
   `admin_id`     BIGINT UNSIGNED NOT NULL COMMENT '所属管理员',
@@ -83,9 +73,7 @@ CREATE TABLE IF NOT EXISTS `admin_sessions` (
     REFERENCES `admin_users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='管理员会话表';
 
--- ------------------------------------------------------------
 -- 系统设置表：键值对（代理配置等运行时设置，UI 内可改）
--- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `settings` (
   `key`        VARCHAR(64) NOT NULL COMMENT '设置项',
   `value`      TEXT        NULL COMMENT '设置值',

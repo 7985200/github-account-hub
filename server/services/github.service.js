@@ -6,6 +6,7 @@
  * - 区分「传输层错误」与「接口层错误」，供上层落库为不同状态
  * - 支持经代理访问（代理设置见「菜单 → 代理设置」，墙内服务器可开启）
  */
+const { fetch } = require('undici'); // 必须用 undici 的 fetch：全局 fetch 与本项目 undici 的 ProxyAgent 不兼容（UND_ERR_INVALID_ARG）
 const config = require('../config');
 const proxy = require('./proxy.service');
 const logger = require('../utils/logger');
@@ -129,6 +130,19 @@ function fetchRepo({ token, repo }) {
   return call(`/repos/${repo}`, { token });
 }
 
+/**
+ * 查询账号「点 Star 的总数」（该账号给别人仓库加星的数量）
+ * 技巧：per_page=1 时 Link 响应头的 rel="last" 页号即为总数，单次请求即可
+ */
+async function fetchStarredCount({ token }) {
+  const res = await call('/user/starred', { token, query: { per_page: 1 } });
+  if (!res.ok) return null;
+  const link = res.headers && typeof res.headers.get === 'function' ? String(res.headers.get('link') || '') : '';
+  const m = link.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+  if (m) return Number(m[1]);
+  return Array.isArray(res.data) ? res.data.length : 0;
+}
+
 /* ---------------- Follow 相关 ---------------- */
 
 /** 关注用户（幂等：已关注时 GitHub 同样返回 204） */
@@ -157,6 +171,147 @@ function forkRepo({ token, repo }) {
 /** 查询目标用户资料 */
 function fetchUserProfile({ token, username }) {
   return call(`/users/${username}`, { token });
+}
+
+/* ---------------- 个人资料编辑（PATCH /user） ---------------- */
+
+/**
+ * GitHub 官方 REST 支持的资料字段白名单
+ * 已实测确认：/user/avatar、/user/status、/user/profile 均不存在（404），
+ * 头像只能走网页上传，状态只能走 GraphQL，其余字段全部由本接口承载。
+ */
+const EDITABLE_PROFILE_FIELDS = [
+  'name',
+  'email',
+  'blog',
+  'twitter_username',
+  'company',
+  'location',
+  'hireable',
+  'bio',
+];
+
+const BIO_MAX = 160;
+
+/** 更新当前认证用户的资料（只透传白名单字段，避免误传导致 422） */
+function updateUserProfile({ token, fields = {} }) {
+  const body = {};
+  for (const key of EDITABLE_PROFILE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(fields, key)) body[key] = fields[key];
+  }
+  if (!Object.keys(body).length) {
+    return Promise.resolve({ ok: false, transport: false, status: 422, message: '没有需要更新的字段', headers: null, data: null });
+  }
+  return call('/user', { method: 'PATCH', token, body });
+}
+
+/* ---------------- GraphQL（状态能力只在 GraphQL 上） ---------------- */
+
+/**
+ * 发起 GraphQL 调用（GitHub 的「状态」没有 REST 端点，只能走 GraphQL）
+ * 复用与 REST 相同的代理通道与超时策略
+ */
+async function graphql({ token, query: gql, variables }) {
+  const url = `${config.github.apiBase.replace(/\/$/, '')}/graphql`;
+  try {
+    const dispatcher = await proxy.getApiDispatcher();
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': config.github.userAgent,
+      },
+      body: JSON.stringify({ query: gql, variables }),
+      ...(dispatcher ? { dispatcher } : {}),
+      signal: AbortSignal.timeout(config.github.timeout),
+    });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    const gqlError = data && Array.isArray(data.errors) && data.errors.length ? data.errors[0].message : '';
+    if (!res.ok || gqlError) {
+      logger.warn(`GitHub GraphQL ${res.status}`, { message: gqlError || text.slice(0, 120) });
+      return {
+        ok: false,
+        transport: false,
+        status: res.status,
+        message: gqlError || `HTTP ${res.status}`,
+        headers: res.headers,
+        data,
+      };
+    }
+    return { ok: true, transport: false, status: res.status, message: '', headers: res.headers, data };
+  } catch (err) {
+    const message =
+      err && err.name === 'TimeoutError' ? `请求 GitHub 超时（${config.github.timeout}ms）` : `网络错误：${err.message}`;
+    logger.warn('GitHub GraphQL 传输失败', { message });
+    return { ok: false, transport: true, status: 0, message, headers: null, data: null };
+  }
+}
+
+const STATUS_FIELDS = `
+  fragment StatusFields on UserStatus {
+    emoji
+    message
+    indicatesLimitedAvailability
+    expiresAt
+    createdAt
+    updatedAt
+  }
+`;
+
+/** 读取当前账号的自定义状态 */
+async function fetchUserStatus({ token }) {
+  const q = `query { viewer { status { ...StatusFields } } } ${STATUS_FIELDS}`;
+  const res = await graphql({ token, query: q });
+  if (!res.ok) return res;
+  return { ...res, data: (res.data && res.data.data && res.data.data.viewer && res.data.data.viewer.status) || null };
+}
+
+/** 设置自定义状态（emoji 支持原生表情或 :shortcode:） */
+async function changeUserStatus({ token, emoji, message, limitedAvailability, expiresAt }) {
+  const input = {};
+  if (emoji !== undefined) input.emoji = emoji === '' ? null : emoji;
+  if (message !== undefined) input.message = message === '' ? null : message;
+  if (limitedAvailability !== undefined) input.limitedAvailability = !!limitedAvailability;
+  if (expiresAt !== undefined) input.expiresAt = expiresAt || null;
+
+  const q = `mutation($input: ChangeUserStatusInput!) {
+    changeUserStatus(input: $input) { status { ...StatusFields } }
+  } ${STATUS_FIELDS}`;
+  const res = await graphql({ token, query: q, variables: { input } });
+  if (!res.ok) return res;
+  return { ...res, data: (res.data && res.data.data && res.data.data.changeUserStatus && res.data.data.changeUserStatus.status) || null };
+}
+
+/* ---------------- 社交链接（REST 专有） ---------------- */
+
+function listSocialAccounts({ token }) {
+  return call('/user/social_accounts', { token });
+}
+
+/** 全量设置：GitHub 只提供「批量新增」和「批量删除」，不提供替换 */
+function addSocialAccounts({ token, urls }) {
+  return call('/user/social_accounts', { method: 'POST', token, body: { account_urls: urls } });
+}
+
+function deleteSocialAccounts({ token, urls }) {
+  return call('/user/social_accounts', { method: 'DELETE', token, body: { account_urls: urls } });
+}
+
+/* ---------------- 邮箱 ---------------- */
+
+function listEmails({ token }) {
+  return call('/user/emails', { token });
+}
+
+function setEmailVisibility({ token, visibility }) {
+  return call('/user/email/visibility', { method: 'PATCH', token, body: { visibility } });
 }
 
 function parseScopes(headers) {
@@ -193,6 +348,9 @@ function normalizeProfile(user) {
     company: user.company || '',
     location: user.location || '',
     blog: user.blog || '',
+    email: user.email || '',
+    twitterUsername: user.twitter_username || '',
+    hireable: !!user.hireable,
     publicRepos: user.public_repos || 0,
     publicGists: user.public_gists || 0,
     followers: user.followers || 0,
@@ -228,6 +386,7 @@ module.exports = {
   fetchRepos,
   fetchRateLimit,
   fetchRepo,
+  fetchStarredCount,
   starRepo,
   unstarRepo,
   checkStarred,
@@ -240,4 +399,16 @@ module.exports = {
   parseRateLimit,
   normalizeProfile,
   normalizeRepo,
+  /* 资料编辑 */
+  EDITABLE_PROFILE_FIELDS,
+  BIO_MAX,
+  updateUserProfile,
+  graphql,
+  fetchUserStatus,
+  changeUserStatus,
+  listSocialAccounts,
+  addSocialAccounts,
+  deleteSocialAccounts,
+  listEmails,
+  setEmailVisibility,
 };

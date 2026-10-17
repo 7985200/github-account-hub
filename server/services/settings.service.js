@@ -17,6 +17,9 @@ function defaults() {
     web_proxy: config.webLogin.proxy || 'auto',
     // API 通道（api.github.com）是否复用网页通道的代理：'1' / '0'
     api_via_proxy: '0',
+    // 代理认证（代理需要用户名密码时使用）；空字符串表示不需要
+    web_proxy_user: '',
+    web_proxy_pass: '',
   };
 }
 
@@ -63,7 +66,22 @@ async function set(key, value) {
   ]);
   cache.set(key, v);
   loaded = true;
-  logger.info(`设置已更新：${key}`, { value: v.slice(0, 120) });
+  /* 敏感设置项不能把值写进日志：代理密码、各类 token、可能内嵌凭据的代理地址 */
+  const SENSITIVE = /pass|token|secret|key/i;
+  let logged = v.slice(0, 120);
+  if (SENSITIVE.test(key)) {
+    logged = '***';
+  } else if (/^[a-z]+:\/\/[^/]*@/i.test(v)) {
+    try {
+      const u = new URL(v);
+      u.username = '***';
+      u.password = '***';
+      logged = u.toString();
+    } catch {
+      logged = '***';
+    }
+  }
+  logger.info(`设置已更新：${key}`, { value: logged });
   return getAll();
 }
 

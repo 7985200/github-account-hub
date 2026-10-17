@@ -1,9 +1,7 @@
-/* ============================================================
-   GitHub 多账号管家 · 样式表
-   设计约束：纯黑白灰、无任何彩色；大圆角；明暗双主题
-   ============================================================ */
+/* GitHub 多账号管家 · 样式表 */
+/* 设计约束：纯黑白灰、无任何彩色；大圆角；明暗双主题 */
 
-/* ----------------------------- 主题变量 ----------------------------- */
+/* 主题变量 */
 :root {
   --radius-card: 20px;
   --radius-modal: 24px;
@@ -75,7 +73,7 @@ html[data-theme="light"] {
   color-scheme: light;
 }
 
-/* ----------------------------- 基础 ----------------------------- */
+/* 基础 */
 * {
   box-sizing: border-box;
 }
@@ -160,7 +158,7 @@ input, textarea, select {
   background-clip: content-box;
 }
 
-/* ----------------------------- 顶栏 ----------------------------- */
+/* 顶栏 */
 .topbar {
   position: sticky;
   top: 0;
@@ -299,7 +297,7 @@ input, textarea, select {
   -webkit-appearance: none;
 }
 
-/* ----------------------------- 按钮 ----------------------------- */
+/* 按钮 */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -423,14 +421,14 @@ input, textarea, select {
   }
 }
 
-/* ----------------------------- 主容器 ----------------------------- */
+/* 主容器 */
 .container {
   max-width: 1360px;
   margin: 0 auto;
   padding: 26px 24px 80px;
 }
 
-/* ----------------------------- 统计条 ----------------------------- */
+/* 统计条 */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -475,7 +473,7 @@ input, textarea, select {
   font-family: var(--font-mono);
 }
 
-/* ----------------------------- 工具栏 ----------------------------- */
+/* 工具栏 */
 .toolbar {
   display: flex;
   align-items: center;
@@ -537,7 +535,7 @@ input, textarea, select {
   font-family: var(--font-mono);
 }
 
-/* ----------------------------- 账号网格 ----------------------------- */
+/* 账号网格 */
 .account-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
@@ -882,7 +880,7 @@ input, textarea, select {
   font-size: 12.5px;
 }
 
-/* ----------------------------- 空状态 / 错误 ----------------------------- */
+/* 空状态 / 错误 */
 .empty-state {
   text-align: center;
   padding: 72px 24px;
@@ -940,7 +938,7 @@ input, textarea, select {
   word-break: break-word;
 }
 
-/* ----------------------------- 骨架屏 ----------------------------- */
+/* 骨架屏 */
 .skeleton {
   display: block;
   position: relative;
@@ -986,7 +984,7 @@ input, textarea, select {
   border-radius: var(--radius-avatar);
 }
 
-/* ----------------------------- 日志视图 ----------------------------- */
+/* 日志视图 */
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1137,7 +1135,7 @@ input, textarea, select {
   text-align: center;
 }
 
-/* ----------------------------- 模态框 ----------------------------- */
+/* 模态框 */
 .modal-root {
   position: fixed;
   inset: 0;
@@ -1387,7 +1385,7 @@ html[data-theme="light"] .modal-overlay {
   padding: 11px 14px;
 }
 
-/* ----------------------------- 仓库列表 ----------------------------- */
+/* 仓库列表 */
 .repo-toolbar {
   display: flex;
   align-items: center;
@@ -1570,7 +1568,7 @@ html[data-theme="light"] .modal-overlay {
   user-select: all;
 }
 
-/* ----------------------------- Toast ----------------------------- */
+/* Toast */
 .toast-wrap {
   position: fixed;
   right: 22px;
@@ -1658,7 +1656,7 @@ html[data-theme="light"] .modal-overlay {
   }
 }
 
-/* ----------------------------- 顶栏下拉菜单 ----------------------------- */
+/* 顶栏下拉菜单 */
 .menu-wrap {
   position: relative;
 }
@@ -1721,7 +1719,7 @@ html[data-theme="light"] .modal-overlay {
   color: var(--text);
 }
 
-/* ----------------------------- 批量 Star ----------------------------- */
+/* 批量 Star */
 .bs-section + .bs-section {
   border-top: 1px solid var(--border);
   margin-top: 20px;
@@ -2171,7 +2169,7 @@ html[data-theme="light"] .modal-overlay {
   word-break: break-word;
 }
 
-/* ----------------------------- 批量关注 ----------------------------- */
+/* 批量关注 */
 .bf-user-top {
   display: flex;
   align-items: center;
@@ -2242,7 +2240,7 @@ html[data-theme="light"] .modal-overlay {
   background: var(--surface);
 }
 
-/* ----------------------------- 系统状态 ----------------------------- */
+/* 系统状态 */
 .health-loading {
   display: grid;
   place-items: center;
@@ -2281,7 +2279,7 @@ html[data-theme="light"] .modal-overlay {
   word-break: break-word;
 }
 
-/* ----------------------------- 密码换 Token（第四期） ----------------------------- */
+/* 密码换 Token（第四期） */
 /* 说明卡片：细边框 + 小型圆角，讲清原理与安全约定 */
 .at-intro {
   font-size: 12px;
@@ -2334,7 +2332,7 @@ html[data-theme="light"] .modal-overlay {
   border: 1px dashed var(--border-strong);
 }
 
-/* ----------------------------- 响应式 ----------------------------- */
+/* 响应式 */
 @media (max-width: 1100px) {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -2468,11 +2466,9 @@ html[data-theme="light"] .modal-overlay {
   }
 }
 
-/* ============================================================
-   五期：启动遮罩 / 登录页 / 管理员账户 / 代理设置
-   ============================================================ */
+/* 五期：启动遮罩 / 登录页 / 管理员账户 / 代理设置 */
 
-/* ----------------------------- 启动遮罩（index 防闪烁） ----------------------------- */
+/* 启动遮罩（index 防闪烁） */
 .app-boot {
   position: fixed;
   inset: 0;
@@ -2497,7 +2493,7 @@ html[data-theme="light"] .modal-overlay {
   font-size: 13px;
 }
 
-/* ----------------------------- 登录页 ----------------------------- */
+/* 登录页 */
 .login-body {
   min-height: 100vh;
 }
@@ -2619,14 +2615,14 @@ html[data-theme="light"] .modal-overlay {
   line-height: 1.6;
 }
 
-/* ----------------------------- 顶栏菜单：分组分隔线 ----------------------------- */
+/* 顶栏菜单：分组分隔线 */
 .menu-sep {
   height: 1px;
   background: var(--border);
   margin: 6px 10px;
 }
 
-/* ----------------------------- 管理员账户 ----------------------------- */
+/* 管理员账户 */
 .adm-identity {
   display: flex;
   align-items: center;
@@ -2697,7 +2693,7 @@ html[data-theme="light"] .modal-overlay {
   line-height: 1.65;
 }
 
-/* ----------------------------- 代理设置 ----------------------------- */
+/* 代理设置 */
 .px-section {
   text-align: left;
 }
@@ -2892,7 +2888,7 @@ html[data-theme="light"] .modal-overlay {
   word-break: break-word;
 }
 
-/* ----------------------------- 五期：窄屏适配 ----------------------------- */
+/* 五期：窄屏适配 */
 @media (max-width: 720px) {
   .login-card {
     padding: 28px 20px 20px;
@@ -2911,9 +2907,7 @@ html[data-theme="light"] .modal-overlay {
   }
 }
 
-/* ============================================================
-   六期：手机端三列紧凑账号卡片 + 账号详情模态
-   ============================================================ */
+/* 六期：手机端三列紧凑账号卡片 + 账号详情模态 */
 
 /* 详情模态内的补充信息行（上次验证时间，仅详情渲染附带） */
 .card-verified {
@@ -3032,7 +3026,7 @@ html[data-theme="light"] .modal-overlay {
   }
 }
 
-/* ---------------- GitHub 开源仓库图标链接（七期） ---------------- */
+/* GitHub 开源仓库图标链接（七期） */
 a.icon-btn {
   display: inline-flex;
   align-items: center;
@@ -3054,7 +3048,7 @@ a.icon-btn svg {
   opacity: 1;
 }
 
-/* ---------------- 密码换 Token：验证码续接视图（八期） ---------------- */
+/* 密码换 Token：验证码续接视图（八期） */
 .at-verify-view {
   display: flex;
   flex-direction: column;
@@ -3145,4 +3139,352 @@ a.icon-btn svg {
 }
 .at-verify-back:hover {
   color: var(--text);
+}
+
+/* 统计条打磨 */
+html[data-theme="dark"] {
+  --sheen: rgba(255, 255, 255, 0.045);
+}
+html[data-theme="light"] {
+  --sheen: rgba(0, 0, 0, 0.022);
+}
+.stat-card {
+  background: linear-gradient(158deg, var(--sheen) 0%, transparent 46%), var(--surface);
+  box-shadow: inset 0 1px 0 var(--sheen);
+}
+.stat-card .stat-value {
+  font-size: 30px;
+}
+@media (max-width: 720px) {
+  .stat-card .stat-value {
+    font-size: 26px;
+  }
+}
+
+/* 资料自定义（编辑器） */
+.modal-foot-spacer {
+  flex: 1;
+}
+.pf-foot-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  align-self: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pf-error {
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-card);
+  color: var(--text-2);
+}
+.pf-error b {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.pf-error p {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+}
+.pf-warn {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-input);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.pf-section {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.pf-tip {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-3);
+}
+.pf-tip-warn {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.pf-tip-warn b {
+  color: var(--text);
+}
+.pf-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+.pf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.pf-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.pf-hint {
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.pf-input:focus {
+  outline: none;
+  border-color: var(--text-3);
+}
+.pf-input::placeholder {
+  color: var(--text-3);
+}
+.pf-textarea {
+  min-height: 76px;
+  resize: vertical;
+  line-height: 1.6;
+}
+.pf-counter {
+  align-self: flex-end;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.pf-counter.is-over {
+  color: #e5484d;
+}
+.pf-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.pf-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--text);
+  cursor: pointer;
+}
+.pf-check-inline {
+  align-self: flex-end;
+  padding-bottom: 9px;
+}
+.pf-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.pf-current.is-empty {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+.pf-current-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+.pf-emojis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pf-emoji {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 17px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.pf-emoji:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.pf-social-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pf-social-row .pf-input {
+  flex: 1;
+  min-width: 0;
+}
+.pf-social-del {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+.pf-social-del:hover {
+  color: var(--text);
+}
+.pf-avatar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.pf-avatar {
+  width: 96px;
+  height: 96px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-avatar);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  object-fit: cover;
+}
+.pf-avatar-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.pf-avatar-side .pf-hint {
+  white-space: normal;
+  line-height: 1.6;
+}
+
+@media (max-width: 720px) {
+  .pf-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pf-avatar-wrap {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .pf-foot-hint {
+    display: none;
+  }
+}
+
+/* 验证码视图：收件邮箱提示 */
+.at-verify-mail {
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  word-break: break-all;
+}
+.at-verify-mail b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pf-manual-link {
+  font-size: 12px;
+  color: var(--text-3);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--border-strong);
+}
+.pf-manual-link:hover {
+  color: var(--text);
+}
+
+/* 头像是用 label 当按钮，保证文件选择器一定能弹出 */
+.pf-file-btn {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 文件输入：视觉隐藏但可点击，避免 display:none 导致部分浏览器点 label 不弹选择器 */
+.pf-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 头像本地裁剪 */
+.pf-crop {
+  margin: 12px 0 4px;
+}
+.pf-crop-frame {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #000;
+  cursor: grab;
+  touch-action: none;
+}
+.pf-crop-frame img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.pf-crop-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  max-width: 240px;
+}
+.pf-crop-zoom {
+  flex: 1;
+  accent-color: var(--text);
+}
+
+/* 代理认证：用户名 / 密码并排 */
+.px-auth-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 520px) {
+  .px-auth-row {
+    grid-template-columns: 1fr;
+  }
 }

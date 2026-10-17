@@ -7,9 +7,8 @@
  * GET /api/proxy-check   网页登录通道检测（自动创建 Token 功能用）
  */
 const express = require('express');
-const os = require('os');
-const config = require('../config');
 const db = require('../db/pool');
+const logger = require('../utils/logger');
 const service = require('../services/account.service');
 const proxy = require('../services/proxy.service');
 
@@ -19,30 +18,16 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 router.get(
   '/health',
   wrap(async (req, res) => {
-    let database = null;
+    /* 这个接口是公开的（探活/监控用），不能回传数据库版本、连接数、错误原文等内部信息，
+       否则未登录即可拿到指纹；明细只写日志。 */
     let databaseError = null;
     try {
-      database = await db.inspect();
+      await db.inspect();
     } catch (err) {
       databaseError = err.message;
+      logger.error('健康检查：数据库不可用', { error: err.message });
     }
-    res.json({
-      ok: !databaseError,
-      service: {
-        name: 'GitHub 多账号管家',
-        version: require('../../package.json').version,
-        env: config.env,
-        host: config.host,
-        port: config.port,
-        node: process.version,
-        uptimeSec: Math.round(process.uptime()),
-        platform: `${os.type()} ${os.release()}`,
-        memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
-      },
-      database: database
-        ? { status: 'connected', ...database }
-        : { status: 'error', error: databaseError },
-    });
+    res.status(databaseError ? 503 : 200).json({ ok: !databaseError });
   })
 );
 

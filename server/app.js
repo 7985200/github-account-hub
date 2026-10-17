@@ -23,6 +23,10 @@ app.disable('x-powered-by');
 // 直连请求（非 loopback）不受影响，避免伪造
 app.set('trust proxy', 'loopback');
 
+/* 头像上传：图片以 base64 传输（1MB 图片 ≈ 1.4MB base64），单独放宽上限；
+   body-parser 解析过一次后会置 req._body，下面的全局 256kb 解析器会自动跳过 */
+app.use('/api/accounts/:id/avatar', express.json({ limit: '3mb' }));
+
 app.use(express.json({ limit: '256kb' }));
 app.use(requestLogger);
 

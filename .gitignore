@@ -18,6 +18,8 @@ runtime/*.ini
 # 本地联调临时目录
 .authtest/
 .lianotmp/
+.t/
+.dash/
 
 # 编辑器与系统
 .vscode/

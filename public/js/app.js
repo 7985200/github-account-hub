@@ -1,10 +1,8 @@
-/* ============================================================
-   GitHub 多账号管家 · 前端逻辑（原生 JS，无依赖）
-   ============================================================ */
+// GitHub 多账号管家 · 前端逻辑（原生 JS，无依赖）
 (function () {
   'use strict';
 
-  /* ----------------------------- 常量 ----------------------------- */
+  // 常量
   var THEME_KEY = 'ghhub-theme';
   var REVEAL_MS = 10000;
 
@@ -29,7 +27,7 @@
   var SUN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>';
   var MOON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
 
-  /* ----------------------------- 工具 ----------------------------- */
+  // 工具
   function $(sel, root) {
     return (root || document).querySelector(sel);
   }
@@ -74,7 +72,7 @@
     );
   }
 
-  /* ----------------------------- API 封装 ----------------------------- */
+  // API 封装
   function api(path, options) {
     var opts = options || {};
     var init = { method: opts.method || 'GET', headers: {} };
@@ -115,7 +113,7 @@
     );
   }
 
-  /* ----------------------------- Toast ----------------------------- */
+  // Toast
   function toast(message, type, duration) {
     var wrap = $('#toastWrap');
     if (!wrap) return;
@@ -140,7 +138,7 @@
     }, duration || 3200);
   }
 
-  /* ----------------------------- 剪贴板 ----------------------------- */
+  // 剪贴板
   function copyText(text) {
     var value = String(text === null || text === undefined ? '' : text);
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -173,7 +171,7 @@
     }
   }
 
-  /* ----------------------------- 按钮忙碌态 ----------------------------- */
+  // 按钮忙碌态
   function setBusy(btn, busy, busyText) {
     if (!btn) return;
     if (busy) {
@@ -189,7 +187,7 @@
     }
   }
 
-  /* ----------------------------- 模态框 ----------------------------- */
+  // 模态框
   function openModal(root) {
     root.hidden = false;
     document.body.style.overflow = 'hidden';
@@ -216,7 +214,7 @@
     el.textContent = '';
   }
 
-  /* ----------------------------- 状态存储 ----------------------------- */
+  // 状态存储
   var state = {
     admin: null,
     view: 'accounts',
@@ -254,7 +252,7 @@
   var revealTimers = new Map();
   var accountsReqSeq = 0;
 
-  /* ----------------------------- 主题 ----------------------------- */
+  // 主题
   function applyTheme(theme) {
     var t = theme === 'light' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', t);
@@ -266,7 +264,7 @@
     }
   }
 
-  /* ----------------------------- 视图切换 ----------------------------- */
+  // 视图切换
   function switchView(view) {
     state.view = view;
     $$('.view-tab').forEach(function (tab) {
@@ -279,7 +277,7 @@
     if (view === 'logs') loadLogs();
   }
 
-  /* ----------------------------- 统计条 ----------------------------- */
+  // 统计条
   function renderStatsSkeleton() {
     var grid = $('#statsGrid');
     grid.innerHTML = Array.from({ length: 4 })
@@ -295,12 +293,21 @@
       .join('');
   }
 
-  function renderStats(accounts, logs) {
-    var a = accounts || {};
+  function renderStats(data) {
+    var a = (data && data.accounts) || {};
+    var logs = (data && data.logs) || {};
     var cards = [
-      { label: '账号总数', value: fmtNum(a.total), sub: '异常 ' + fmtNum(a.abnormal) + ' · 仅密码 ' + fmtNum(a.passwordOnly) },
-      { label: '有效账号', value: fmtNum(a.active), sub: '未验证 ' + fmtNum(a.unverified) + ' · 授权 ' + fmtNum(a.grantedScopes) + ' 项' },
-      { label: '公开仓库合计', value: fmtNum(a.publicRepos), sub: '来自各账号资料快照' },
+      {
+        label: '账号总数',
+        value: fmtNum(a.total),
+        sub: '异常 ' + fmtNum(a.abnormal) + ' · 仅密码 ' + fmtNum(a.passwordOnly)
+      },
+      {
+        label: '有效账号',
+        value: fmtNum(a.active),
+        sub: '未验证 ' + fmtNum(a.unverified) + ' · 授权 ' + fmtNum(a.grantedScopes) + ' 项'
+      },
+      { label: 'Star 合计', value: fmtNum(a.starred), sub: '各账号给别人仓库点 Star 的总数' },
       { label: '关注者合计', value: fmtNum(a.followers), sub: 'GitHub Followers' }
     ];
     if (logs && logs.total !== undefined) cards[0].sub += ' · 日志 ' + fmtNum(logs.total) + ' 条';
@@ -320,14 +327,14 @@
   function loadStats() {
     return api('/api/stats')
       .then(function (data) {
-        renderStats(data.accounts, data.logs);
+        renderStats(data);
       })
       .catch(function () {
-        renderStats(null, null);
+        renderStats(null);
       });
   }
 
-  /* ----------------------------- 账号卡片 ----------------------------- */
+  // 账号卡片
   function credRowHtml(kind, masked, field) {
     return (
       '<div class="cred-row">' +
@@ -415,6 +422,7 @@
       '</div>' +
       '<div class="card-actions">' +
       '<button type="button" class="btn btn-ghost" data-action="verify">验证</button>' +
+      '<button type="button" class="btn btn-ghost" data-action="profile">资料</button>' +
       '<button type="button" class="btn btn-ghost" data-action="repos">仓库</button>' +
       '<button type="button" class="btn btn-ghost" data-action="edit">编辑</button>' +
       '<button type="button" class="btn btn-ghost btn-ghost-danger" data-action="delete">删除</button>' +
@@ -548,7 +556,7 @@
     if (state.view === 'logs') loadLogs();
   }
 
-  /* ----------------------------- 凭据：复制 / 显示 ----------------------------- */
+  // 凭据：复制 / 显示
   function maskCredential(card, btn) {
     var valueEl = card.querySelector('.cred-value');
     if (!valueEl) return;
@@ -614,7 +622,7 @@
       });
   }
 
-  /* ----------------------------- 验证 ----------------------------- */
+  // 验证
   function handleVerify(card, btn) {
     var id = Number(card.dataset.id);
     setBusy(btn, true, '验证中');
@@ -632,7 +640,7 @@
       });
   }
 
-  /* ----------------------------- 仓库 ----------------------------- */
+  // 仓库
   function repoRowHtml(repo) {
     var name = repo.fullName || repo.name || '';
     var url = safeUrl(repo.htmlUrl);
@@ -691,12 +699,17 @@
     hideFormError($('#reposError'));
     $('#reposList').innerHTML = '<div class="repo-loading"><span class="spinner spinner-lg"></span></div>';
     openModal($('#reposModal'));
-    api('/api/accounts/' + account.id + '/repos?page=1&perPage=100')
+    /* 记住发起时的账号：请求回来时若已经切到别的账号，直接丢弃结果，
+       否则 A 账号的仓库列表会被渲染到 B 账号上。 */
+    var reqId = Number(account.id);
+    api('/api/accounts/' + reqId + '/repos?page=1&perPage=100')
       .then(function (data) {
+        if (reqId !== state.reposAccountId) return;
         state.repos = Array.isArray(data.repos) ? data.repos : [];
         renderRepos();
       })
       .catch(function (err) {
+        if (reqId !== state.reposAccountId) return;
         $('#reposList').innerHTML = '';
         showFormError($('#reposError'), err.message);
       });
@@ -733,7 +746,7 @@
       });
   }
 
-  /* ----------------------------- 添加账号 ----------------------------- */
+  // 添加账号
   function switchAddTab(tab) {
     /* 切换 Tab 时退出验证码视图（清理倒计时与会话状态） */
     clearAtResendTimer();
@@ -818,7 +831,7 @@
       });
   }
 
-  /* ----------------------------- 密码换 Token ----------------------------- */
+  // 密码换 Token
   var AT_SLOW_MS = 15000;
 
   /* 后端 message 缺失（api() 兜底格式）时，按状态码给出具体处理建议 */
@@ -918,7 +931,7 @@
       });
   }
 
-  /* ----------------------------- 密码换 Token：验证码续接 ----------------------------- */
+  // 密码换 Token：验证码续接
   var atVerifyState = { verifyId: '', timer: null, left: 0 };
 
   function clearAtResendTimer() {
@@ -957,12 +970,16 @@
 
   function updateAtVerifySubmit() {
     var code = ($('#atVerifyCode').value || '').replace(/\D/g, '');
-    $('#atVerifySubmit').disabled = code.length !== 6;
+    /* 位数以服务端解析结果为准；解析不到时按「≥4 位」宽松判断 */
+    $('#atVerifySubmit').disabled = !pfCodeOk(code, pfCodeLen(atVerifyState));
   }
 
   /** 切换到验证码视图（后端返回 needsVerify 时） */
   function showAtVerifyView(data) {
     atVerifyState.verifyId = (data && data.verifyId) || '';
+    /* 关键：把后端解析出的验证码位数接进来。之前完全没接，导致上限/校验全走宽松分支，
+       而 maxlength=6 + slice(0,6) 又硬性截断，两条路径都是死锁。 */
+    atVerifyState.codeLength = pfCodeLen(data);
     $('#atFormView').hidden = true;
     $('#atVerifyView').hidden = false;
     $('#addSubmit').hidden = true;
@@ -974,6 +991,8 @@
     $('#atVerifySubmit').hidden = false;
     $('#atVerifyResend').hidden = false;
     $('#atVerifyCode').value = '';
+    var codeInput = $('#atVerifyCode');
+    if (codeInput) codeInput.maxLength = atVerifyState.codeLength || 12;
     updateAtVerifySubmit();
     startAtResendCountdown(0);
     setTimeout(function () {
@@ -1005,7 +1024,11 @@
     var errEl = $('#atVerifyError');
     var btn = $('#atVerifySubmit');
     var code = ($('#atVerifyCode').value || '').replace(/\D/g, '');
-    if (code.length !== 6) return showFormError(errEl, '请输入 6 位验证码');
+    /* 位数以服务端解析结果为准；解析不到时按「≥4 位」宽松判断 */
+    var atLen = pfCodeLen(atVerifyState);
+    if (!pfCodeOk(code, atLen)) {
+      return showFormError(errEl, atLen ? '请输入 ' + atLen + ' 位验证码' : '请输入完整验证码');
+    }
     if (!atVerifyState.verifyId) return showFormError(errEl, '验证会话已失效，请返回重新开始');
     hideFormError(errEl);
     setBusy(btn, true, '正在验证…');
@@ -1077,7 +1100,7 @@
       });
   }
 
-  /* ----------------------------- 编辑账号 ----------------------------- */
+  // 编辑账号
   function openEdit(account) {
     state.editingId = Number(account.id);
     $('#editAccountLabel').textContent = account.login || '（未命名）';
@@ -1135,7 +1158,7 @@
       });
   }
 
-  /* ----------------------------- 删除账号 ----------------------------- */
+  // 删除账号
   function openDelete(account) {
     state.pendingDeleteId = Number(account.id);
     $('#deleteLogin').textContent = account.login || '（未命名）';
@@ -1171,7 +1194,7 @@
       });
   }
 
-  /* ----------------------------- 操作日志 ----------------------------- */
+  // 操作日志
   function renderLogRows(items) {
     var tbody = $('#logBody');
     if (!items || !items.length) {
@@ -1226,7 +1249,7 @@
       });
   }
 
-  /* ----------------------------- 顶栏下拉菜单 ----------------------------- */
+  // 顶栏下拉菜单
   /** 菜单弹出定位：视口内自适应 —— 优先右对齐按钮；左侧空间不足（窄屏换行）改为左对齐；仍溢出则贴视口边缘 */
   function positionMenuPopover() {
     var pop = $('#menuPopover');
@@ -1274,7 +1297,7 @@
     if (action === 'logout') return openLogout();
   }
 
-  /* ----------------------------- 验证全部账号 ----------------------------- */
+  // 验证全部账号
   function verifyAllAccounts() {
     if (state.verifyingAll) {
       toast('正在验证中，请稍候', 'info');
@@ -1332,7 +1355,7 @@
       });
   }
 
-  /* ----------------------------- 系统状态 ----------------------------- */
+  // 系统状态
   function fmtUptime(sec) {
     var s = Number(sec);
     if (sec === null || sec === undefined || isNaN(s) || s < 0) return '—';
@@ -1358,16 +1381,13 @@
   }
 
   function renderHealth(svc, db) {
-    var svcLabel = [svc.name, svc.version ? 'v' + svc.version : ''].filter(Boolean).join(' · ') || '—';
-    var poolSize = db.poolSize === null || db.poolSize === undefined ? '—' : String(db.poolSize);
-    var threads = db.threadsConnected === null || db.threadsConnected === undefined ? '—' : String(db.threadsConnected);
+    /* /api/health 是公开接口，只回 { ok }，避免向未登录者泄露数据库版本、
+       连接数、错误原文等内部信息。所以这里只展示「正常 / 异常」，
+       需要细节请看服务端日志。 */
+    var ok = db && db.status === 'error' ? false : true;
     var rows = [
-      ['服务名称 / 版本', svcLabel],
-      ['Node 版本', svc.node || '—'],
-      ['运行时长', fmtUptime(svc.uptimeSec)],
-      ['MySQL 版本', db.version || '—'],
-      ['连接池大小', poolSize],
-      ['当前连接数', threads]
+      ['服务状态', ok ? '正常' : '数据库不可用'],
+      ['数据库', db && db.status === 'error' ? '连接失败（详见服务端日志）' : '已连接']
     ];
     $('#healthBody').innerHTML = rows
       .map(function (r) {
@@ -1379,7 +1399,7 @@
       .join('');
   }
 
-  /* ----------------------------- 管理员账户 ----------------------------- */
+  // 管理员账户
   function openAdmin() {
     var admin = state.admin || {};
     $('#admUsername').textContent = admin.username || '—';
@@ -1461,7 +1481,7 @@
       });
   }
 
-  /* ----------------------------- 代理设置 ----------------------------- */
+  // 代理设置
   /** 当前表单值：auto / direct / 自定义地址（自定义为空时返回 ''） */
   function currentProxyValue() {
     var checked = $('#proxyModal .px-radio:checked');
@@ -1493,6 +1513,8 @@
     result.textContent = '';
     setProxyMode('auto');
     $('#pxCustomInput').value = '';
+    $('#pxAuthUser').value = '';
+    $('#pxAuthPass').value = '';
     $('#pxApiVia').checked = false;
     $('#pxWebCurrent').textContent = '';
     openModal($('#proxyModal'));
@@ -1502,6 +1524,9 @@
         var mode = webProxy === 'auto' || webProxy === 'direct' ? webProxy : 'custom';
         setProxyMode(mode);
         if (mode === 'custom') $('#pxCustomInput').value = webProxy;
+        $('#pxAuthUser').value = data.proxyUser || '';
+        /* 密码不回显，只提示「已设置」，留空表示不修改 */
+        $('#pxAuthPass').placeholder = data.hasProxyPass ? '已设置，留空表示不修改' : '需要认证时填写';
         $('#pxApiVia').checked = !!data.apiViaProxy;
         renderProxyCurrent(data);
       })
@@ -1531,7 +1556,14 @@
       box.innerHTML = '<span class="spinner"></span><span>仍在探测中，请稍候…</span>';
     }, 15000);
 
-    api('/api/admin/proxy/test', { method: 'POST', body: { webProxy: value } })
+    api('/api/admin/proxy/test', {
+      method: 'POST',
+      body: {
+        webProxy: value,
+        proxyUser: $('#pxAuthUser') ? $('#pxAuthUser').value.trim() : '',
+        proxyPass: $('#pxAuthPass') ? $('#pxAuthPass').value : undefined
+      }
+    })
       .then(function (data) {
         var web = data.web || {};
         if (web.available) {
@@ -1562,10 +1594,15 @@
     }
     var btn = $('#pxSaveBtn');
     setBusy(btn, true, '保存中…');
-    api('/api/admin/proxy', {
-      method: 'PUT',
-      body: { webProxy: value, apiViaProxy: $('#pxApiVia').checked }
-    })
+    var passEl = $('#pxAuthPass');
+    var body = {
+      webProxy: value,
+      apiViaProxy: $('#pxApiVia').checked,
+      proxyUser: $('#pxAuthUser') ? $('#pxAuthUser').value.trim() : ''
+    };
+    /* 密码留空表示「不修改」，避免把已保存的密码清掉 */
+    if (passEl && passEl.value) body.proxyPass = passEl.value;
+    api('/api/admin/proxy', { method: 'PUT', body: body })
       .then(function (data) {
         renderProxyCurrent(data);
         toast('代理设置已保存，即时生效', 'success');
@@ -1579,7 +1616,7 @@
       });
   }
 
-  /* ----------------------------- 退出登录 ----------------------------- */
+  // 退出登录
   function openLogout() {
     var admin = state.admin || {};
     $('#logoutUser').textContent = admin.username || '';
@@ -1602,7 +1639,7 @@
       });
   }
 
-/* ----------------------------- 批量 Star ----------------------------- */
+// 批量 Star
 var bsRepoTimer = null;
 
 /* 结果状态展示元数据：实心反白 / 空心描边 / 灰横杠 / 虚线（状态字符串与后端逐字对应） */
@@ -1899,7 +1936,7 @@ var STAR_STATUS_META = {
     $('#bsResults').innerHTML = rowsHtml + batchSummaryHtml(summary);
   }
 
-  /* ----------------------------- 批量关注 ----------------------------- */
+  // 批量关注
   var bfUserTimer = null;
 
   /* 结果状态展示元数据：实心反白 / 空心描边 / 灰横杠 / 虚线（状态字符串与后端逐字对应） */
@@ -2108,7 +2145,7 @@ var STAR_STATUS_META = {
     $('#bfResults').innerHTML = rowsHtml + batchSummaryHtml(summary);
   }
 
-  /* ----------------------------- 批量复刻（Fork） ----------------------------- */
+  // 批量复刻（Fork）
   var bkRepoTimer = null;
 
   /* 结果状态展示元数据：实心反白 / 空心描边 / 灰横杠 / 虚线（状态字符串与后端逐字对应） */
@@ -2282,7 +2319,7 @@ var STAR_STATUS_META = {
     $('#bkResults').innerHTML = rowsHtml + batchSummaryHtml(summary);
   }
 
-  /* ----------------------------- 账号详情（窄屏紧凑卡片点击打开） ----------------------------- */
+  // 账号详情（窄屏紧凑卡片点击打开）
   var COMPACT_QUERY = '(max-width: 720px)';
 
   /** 是否处于窄屏紧凑模式（断点与 CSS 保持一致） */
@@ -2315,7 +2352,904 @@ var STAR_STATUS_META = {
     openModal($('#accountDetailModal'));
   }
 
-  /* ----------------------------- 卡片操作委托 ----------------------------- */
+  // 资料自定义（基本资料 / 状态 / 社交链接 / 头像）
+  var PF = { accountId: null, tab: 'basic', data: null, orig: null, avatarFile: null, avatarVerify: null, pendingAvatar: '' };
+  var pfResendTimer = null;
+  var pfResendLeft = 0;
+  var pfReqSeq = 0;
+
+  var PF_STATUS_EMOJIS = ['👍', '🚀', '🔥', '💤', '🎯', '☕', '🏠', '📚', '🎧', '🌙', '😄', '⚡', '🧑‍💻', '🌴'];
+
+  var PF_EXPIRES = [
+    { label: '不自动清除', value: '' },
+    { label: '30 分钟后', value: '30m' },
+    { label: '1 小时后', value: '1h' },
+    { label: '4 小时后', value: '4h' },
+    { label: '1 天后', value: '1d' },
+    { label: '1 周后', value: '7d' }
+  ];
+
+  function pfField(label, id, value, opts) {
+    var o = opts || {};
+    var input = o.textarea
+      ? '<textarea class="pf-input pf-textarea" id="' + id + '" rows="3" maxlength="' + (o.max || 400) + '" placeholder="' +
+        esc(o.placeholder || '') + '">' + esc(value) + '</textarea>'
+      : '<input class="pf-input" id="' + id + '" type="' + (o.type || 'text') + '" value="' + esc(value) +
+        '" placeholder="' + esc(o.placeholder || '') + '"' + (o.max ? ' maxlength="' + o.max + '"' : '') + '>';
+    var counter = o.counter ? '<span class="pf-counter" id="' + id + 'Count"></span>' : '';
+    return (
+      '<label class="pf-field"><span class="pf-label">' + esc(label) +
+      (o.hint ? '<em class="pf-hint">' + esc(o.hint) + '</em>' : '') + '</span>' +
+      input + counter + '</label>'
+    );
+  }
+
+  function pfBasicHtml(d) {
+    var p = d.profile || {};
+    var prim = (d.emails || []).find(function (x) { return x.primary; }) || (d.emails || [])[0] || null;
+    return (
+      '<div class="pf-section">' +
+      '<p class="pf-tip">这些字段直接写入 GitHub 个人资料（官方 PATCH /user 接口），保存后立即在 github.com 生效。</p>' +
+      pfField('显示名称 Name', 'pfName', p.name, { placeholder: '例如：张三 / Alex', max: 255 }) +
+      pfField('个人简介 Bio', 'pfBio', p.bio, { textarea: true, max: d.limits.bioMax, counter: true, placeholder: '一句话介绍自己，支持 emoji' }) +
+      '<div class="pf-row">' +
+      pfField('公司 Company', 'pfCompany', p.company, { placeholder: '@公司名', max: 255 }) +
+      pfField('位置 Location', 'pfLocation', p.location, { placeholder: 'China / Tokyo', max: 255 }) +
+      '</div>' +
+      '<div class="pf-row">' +
+      pfField('个人网站 Blog', 'pfBlog', p.blog, { placeholder: 'https://example.com', max: 255 }) +
+      pfField('X / Twitter 用户名', 'pfTwitter', p.twitterUsername, { placeholder: '不含 @，例如 jack', max: 255 }) +
+      '</div>' +
+      '<div class="pf-row">' +
+      pfField('公开邮箱 Public email', 'pfEmail', prim && prim.visibility === 'public' ? prim.email : (p.email || ''), {
+        placeholder: '留空则不公开邮箱',
+        hint: prim && prim.visibility !== 'public' ? '当前主邮箱未公开' : ''
+      }) +
+      '<label class="pf-field"><span class="pf-label">主邮箱可见性<em class="pf-hint">' +
+      esc(prim ? prim.email : '（无主邮箱）') + '</em></span>' +
+      '<select class="pf-input" id="pfEmailVisibility"' + (prim ? '' : ' disabled') + '>' +
+      '<option value="private"' + (prim && prim.visibility === 'public' ? '' : ' selected') + '>私有（不显示在主页）</option>' +
+      '<option value="public"' + (prim && prim.visibility === 'public' ? ' selected' : '') + '>公开（显示在主页）</option>' +
+      '</select></label>' +
+      '</div>' +
+      '<label class="pf-check"><input type="checkbox" id="pfHireable"' + (p.hireable ? ' checked' : '') +
+      '><span>Available for hire（显示「可雇佣」标记）</span></label>' +
+      '</div>'
+    );
+  }
+
+  function pfStatusHtml(d) {
+    var s = d.status;
+    var cur = s
+      ? '<div class="pf-current"><span class="pf-current-emoji">' + esc(s.emoji || '💬') + '</span>' +
+        '<span><b>' + esc(s.message || '（无文字）') + '</b>' +
+        (s.indicatesLimitedAvailability ? '<em class="pf-hint">· 忙碌</em>' : '') +
+        (s.expiresAt ? '<em class="pf-hint">· ' + esc(fmtDateTime(s.expiresAt)) + ' 过期</em>' : '') +
+        '</span></div>'
+      : '<div class="pf-current is-empty">当前没有设置状态</div>';
+    return (
+      '<div class="pf-section">' +
+      '<p class="pf-tip">GitHub 状态只提供 GraphQL 接口（无 REST 端点），这里已经帮你接好。</p>' +
+      cur +
+      pfField('表情 Emoji', 'pfStatusEmoji', s ? s.emoji || '' : '', {
+        placeholder: '粘贴任意 emoji，或写 :coffee: 这种短代码'
+      }) +
+      '<div class="pf-emojis" id="pfEmojiPicks">' +
+      PF_STATUS_EMOJIS.map(function (e) {
+        return '<button type="button" class="pf-emoji" data-emoji="' + esc(e) + '">' + e + '</button>';
+      }).join('') +
+      '</div>' +
+      pfField('状态文字 Message', 'pfStatusMessage', s ? s.message || '' : '', {
+        placeholder: '例如：专注写代码中',
+        max: d.limits.statusMax,
+        counter: true
+      }) +
+      '<div class="pf-row">' +
+      '<label class="pf-field"><span class="pf-label">自动清除</span>' +
+      '<select class="pf-input" id="pfStatusExpires">' +
+      '<option value="keep" selected>保持现有设置</option>' +
+      PF_EXPIRES.map(function (x) { return '<option value="' + x.value + '">' + esc(x.label) + '</option>'; }).join('') +
+      '</select></label>' +
+      '<label class="pf-check pf-check-inline"><input type="checkbox" id="pfStatusLimited"' +
+      (s && s.indicatesLimitedAvailability ? ' checked' : '') + '><span>标记为「忙碌」</span></label>' +
+      '</div>' +
+      '<button type="button" class="btn btn-ghost btn-ghost-danger" id="pfClearStatus">清除状态</button>' +
+      '</div>'
+    );
+  }
+
+  function pfSocialHtml(d) {
+    var list = (d.socialAccounts || []).map(function (x) { return x.url; });
+    if (!list.length) list = [''];
+    return (
+      '<div class="pf-section">' +
+      '<p class="pf-tip">显示在个人主页的社交链接（GitHub 官方 /user/social_accounts 接口，最多 10 条）。' +
+      'GitHub 会按域名自动识别图标，例如 x.com → Twitter、facebook.com → Facebook。</p>' +
+      '<div id="pfSocialList">' +
+      list
+        .map(function (u, i) {
+          return (
+            '<div class="pf-social-row" data-row="' + i + '">' +
+            '<input class="pf-input" data-social type="url" value="' + esc(u) + '" placeholder="https://x.com/yourname">' +
+            '<button type="button" class="icon-btn pf-social-del" data-del-social aria-label="删除该行">✕</button>' +
+            '</div>'
+          );
+        })
+        .join('') +
+      '</div>' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="pfAddSocial">+ 添加一条</button>' +
+      '</div>'
+    );
+  }
+
+  function pfAvatarHtml(d) {
+    var p = d.profile || {};
+    return (
+      '<div class="pf-section">' +
+      '<div class="pf-avatar-wrap">' +
+      '<img class="pf-avatar" id="pfAvatarPreview" src="' + esc(PF.pendingAvatar || p.avatarUrl || '') + '" alt="当前头像">' +
+      '<div class="pf-avatar-side">' +
+      /* accept 用 image/* ：写死 png/jpeg/gif 会让 WebP、HEIC 在文件对话框里选不中；
+         输入框不用 hidden（display:none 时部分浏览器点 label 不弹选择器），改用视觉隐藏。 */
+      '<input type="file" id="pfAvatarFile" accept="image/*" class="pf-file-input">' +
+      '<label class="btn btn-ghost pf-file-btn" for="pfAvatarFile" id="pfAvatarPick">选择图片</label>' +
+      '<p class="pf-hint">选好后可拖动调整位置、拉滑块缩放，最终按正方形上传。</p>' +
+      '</div>' +
+      '</div>' +
+      '<div class="pf-crop" id="pfCrop" hidden>' +
+      '<div class="pf-crop-frame" id="pfCropFrame"><img id="pfCropImg" alt="裁剪预览"></div>' +
+      '<div class="pf-crop-bar">' +
+      '<span class="pf-hint">拖动调整</span>' +
+      '<input type="range" id="pfCropZoom" class="pf-crop-zoom" min="0" max="100" value="0" aria-label="缩放">' +
+      '</div>' +
+      '</div>' +
+      '<label class="pf-field"><span class="pf-label">GitHub 密码<em class="pf-hint">仅首次需要，之后复用登录状态</em></span>' +
+      '<input class="pf-input" id="pfAvatarPassword" type="password" autocomplete="new-password" placeholder="该账号的 GitHub 登录密码"></label>' +
+      '<p class="pf-tip" id="pfAvatarNote"></p>' +
+      '</div>'
+    );
+  }
+
+  var PF_VERIFY_LABEL = {
+    email: '邮箱验证码',
+    totp: '两步验证码（验证器 App）',
+    sms: '短信验证码'
+  };
+
+  /**
+   * 验证码位数由后端从 GitHub 验证页的 maxlength 解析得出（见 parseVerifyPage）。
+   * 返回 0 表示解析不到 —— 此时按宽松策略处理（不限长度、只要求 ≥4 位），
+   * 避免把非 6 位的验证码截断或永远提交不出去。
+   */
+  function pfCodeLen(v) {
+    var n = Number(v && v.codeLength) || 0;
+    return n >= 4 && n <= 12 ? n : 0;
+  }
+  function pfCodeOk(code, len) {
+    return len ? code.length === len : code.length >= 4;
+  }
+
+  function clearPfResendTimer() {
+    if (pfResendTimer) {
+      clearInterval(pfResendTimer);
+      pfResendTimer = null;
+    }
+  }
+
+  function updatePfResendBtn() {
+    var btn = $('#pfAvatarResend');
+    if (!btn) return;
+    if (pfResendLeft > 0) {
+      btn.disabled = true;
+      btn.textContent = '重新发送（' + pfResendLeft + 's）';
+    } else {
+      btn.disabled = false;
+      btn.textContent = '重新发送验证码';
+    }
+  }
+
+  function startPfResendCountdown(seconds) {
+    clearPfResendTimer();
+    pfResendLeft = seconds;
+    updatePfResendBtn();
+    if (seconds <= 0) return;
+    pfResendTimer = setInterval(function () {
+      pfResendLeft -= 1;
+      if (pfResendLeft <= 0) {
+        pfResendLeft = 0;
+        clearPfResendTimer();
+      }
+      updatePfResendBtn();
+    }, 1000);
+  }
+
+  /** 头像上传要求额外验证时的验证码输入视图（与「密码换 Token」同一套交互与样式） */
+  function pfAvatarVerifyHtml() {
+    var v = PF.avatarVerify || {};
+    var label = PF_VERIFY_LABEL[v.verifyType] || '验证码';
+    var mins = v.expiresInSec ? Math.max(1, Math.round(v.expiresInSec / 60)) : 10;
+    var len = pfCodeLen(v);
+    var maxAttr = len ? ' maxlength="' + len + '"' : ' maxlength="12"';
+    var placeholder = len ? new Array(len + 1).join('0') : '验证码';
+    return (
+      '<div class="pf-section"><div class="at-verify-view">' +
+      '<div class="at-verify-icon" aria-hidden="true">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="4" y="10" width="16" height="10" rx="2.5"></rect>' +
+      '<path d="M8 10V7a4 4 0 0 1 8 0v3"></path>' +
+      '<circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none"></circle>' +
+      '</svg></div>' +
+      '<p class="at-verify-title">需要安全验证</p>' +
+      '<p class="at-verify-hint" id="pfAvatarHint">' + esc(v.hint || '验证码已发送，请查收后输入') + '</p>' +
+      '<p class="at-verify-note">' + esc(label) + ' · ' + mins + ' 分钟内有效 · 验证通过后会自动继续上传头像</p>' +
+      (function () {
+        /* 把收码邮箱原文显示出来：GitHub 的提示里是脱敏的，用户常常不知道该去哪个邮箱收 */
+        var prim = ((PF.data && PF.data.emails) || []).filter(function (x) { return x.primary; })[0];
+        return prim && prim.email
+          ? '<p class="at-verify-mail">收件邮箱：<b class="mono">' + esc(prim.email) + '</b></p>'
+          : '';
+      })() +
+      '<input id="pfAvatarCode" class="at-code-input mono" type="text" inputmode="numeric" autocomplete="one-time-code"' +
+      maxAttr + ' placeholder="' + esc(placeholder) + '" spellcheck="false" aria-label="验证码">' +
+      '<div class="form-error" id="pfAvatarError" hidden></div>' +
+      '<div class="at-verify-actions">' +
+      '<button type="button" class="btn btn-primary" id="pfAvatarVerifyBtn" disabled>提交验证</button>' +
+      '<button type="button" class="btn btn-ghost" id="pfAvatarResend">重新发送验证码</button>' +
+      '</div>' +
+      '<button type="button" class="link-btn at-verify-back" id="pfAvatarBack">← 返回重新选择图片</button>' +
+      '</div></div>'
+    );
+  }
+
+  function submitAvatarCode() {
+    var errEl = $('#pfAvatarError');
+    var btn = $('#pfAvatarVerifyBtn');
+    var input = $('#pfAvatarCode');
+    var code = (input ? input.value : '').replace(/\D/g, '');
+    if (!pfCodeOk(code, pfCodeLen(PF.avatarVerify))) {
+      return showFormError(errEl, '请输入完整验证码');
+    }
+    if (!PF.avatarVerify || !PF.avatarVerify.verifyId) {
+      return showFormError(errEl, '验证会话已失效，请返回重新选择图片');
+    }
+    hideFormError(errEl);
+    setBusy(btn, true, '正在验证…');
+
+    api('/api/accounts/' + PF.accountId + '/avatar/verify', {
+      method: 'POST',
+      body: { verifyId: PF.avatarVerify.verifyId, code: code }
+    })
+      .then(function (r) {
+        clearPfResendTimer();
+        PF.avatarVerify = null;
+        PF.avatarFile = null;
+        var pick = $('#pfAvatarFile');
+        if (pick) pick.value = '';
+        toast('验证通过，头像已更新', 'success', 5200);
+        if (r && r.avatarUrl) PF.pendingAvatar = r.avatarUrl;
+        return loadProfileEditor();
+      })
+      .catch(function (err) {
+        if (err && err.code === 'VERIFY_EXPIRED') {
+          showFormError(errEl, err.message || '验证会话已过期，请返回重新选择图片');
+          var vb = $('#pfAvatarVerifyBtn');
+          var rb = $('#pfAvatarResend');
+          if (vb) vb.hidden = true;
+          if (rb) rb.hidden = true;
+          return;
+        }
+        showFormError(errEl, (err && err.message) || '验证失败，请重试');
+        var i = $('#pfAvatarCode');
+        if (i) {
+          i.value = '';
+          i.focus();
+        }
+        var b = $('#pfAvatarVerifyBtn');
+        if (b) b.disabled = true;
+      })
+      .then(function () {
+        setBusy(btn, false);
+        return loadAccounts().catch(function () {});
+      });
+  }
+
+  function resendAvatarCode() {
+    var btn = $('#pfAvatarResend');
+    var errEl = $('#pfAvatarError');
+    if (!btn || btn.disabled) return;
+    if (!PF.avatarVerify || !PF.avatarVerify.verifyId) {
+      return showFormError(errEl, '验证会话已失效，请返回重新选择图片');
+    }
+    hideFormError(errEl);
+    btn.disabled = true;
+    btn.textContent = '正在发送…';
+    api('/api/accounts/' + PF.accountId + '/avatar/resend', {
+      method: 'POST',
+      body: { verifyId: PF.avatarVerify.verifyId }
+    })
+      .then(function (data) {
+        toast((data && data.hint) || '验证码已重新发送', 'success');
+        startPfResendCountdown(60);
+        var i = $('#pfAvatarCode');
+        if (i) i.focus();
+      })
+      .catch(function (err) {
+        showFormError(errEl, (err && err.message) || '重发失败，请稍后重试');
+        btn.disabled = false;
+        btn.textContent = '重新发送验证码';
+      });
+  }
+
+  function renderProfileBody() {
+    var d = PF.data;
+    if (!d) return;
+    var body = $('#profileModalBody');
+    var html = '';
+    if (d.warnings && d.warnings.length) {
+      html += '<div class="pf-warn">' + d.warnings.map(esc).join('<br>') + '</div>';
+    }
+    if (PF.tab === 'basic') html += pfBasicHtml(d);
+    else if (PF.tab === 'status') html += pfStatusHtml(d);
+    else if (PF.tab === 'social') html += pfSocialHtml(d);
+    else if (PF.avatarVerify) html += pfAvatarVerifyHtml();
+    else html += pfAvatarHtml(d);
+    body.innerHTML = html;
+    /* 保存按钮显隐跟随实际渲染内容走 —— 放在这里而不是 setProfileTab，
+       否则「返回重选图片」这类只重渲染、不切 tab 的路径会漏掉同步 */
+    var saveBtn = $('#profileSaveBtn');
+    if (saveBtn) saveBtn.hidden = !!(PF.tab === 'avatar' && PF.avatarVerify);
+    bindProfileTabEvents();
+    updatePfResendBtn();
+  }
+
+  /**
+   * 把任意图片统一处理成可上传的头像：
+   * 缩到 460px 见方以内，必要时转 JPEG 压到 1MB 以下。
+   */
+  /* 正方形裁剪：本地裁好再上传，GitHub 就不需要我们再确认它那边的裁剪框了 */
+  var PF_CROP_FRAME = 240;
+
+  function pfOpenCropper(file) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      var frame = PF_CROP_FRAME;
+      var cover = Math.max(frame / img.width, frame / img.height);
+      PF.crop = { img: img, cover: cover, zoom: 1, dx: 0, dy: 0 };
+      PF.cropName = file.name;
+      PF.cropUrl = url;
+      var box = $('#pfCrop');
+      if (box) box.hidden = false;
+      var el = $('#pfCropImg');
+      if (el) el.src = url;
+      var z = $('#pfCropZoom');
+      if (z) z.value = '0';
+      pfCropApply();
+      /* 选了图就让左边预览显示它，用户能立刻看到效果 */
+      var prev = $('#pfAvatarPreview');
+      if (prev) prev.src = url;
+      $('#pfAvatarNote').textContent = '拖动调整位置，满意后点上传。';
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      toast('这个文件不是有效图片', 'error');
+    };
+    img.src = url;
+  }
+
+  /** 把当前位移/缩放应用到预览图，并把偏移夹在不露底白的范围内 */
+  function pfCropApply() {
+    var c = PF.crop;
+    if (!c) return;
+    var frame = PF_CROP_FRAME;
+    var scale = c.cover * c.zoom;
+    var w = c.img.width * scale;
+    var h = c.img.height * scale;
+    c.dx = Math.min(0, Math.max(frame - w, c.dx));
+    c.dy = Math.min(0, Math.max(frame - h, c.dy));
+    var el = $('#pfCropImg');
+    if (el) {
+      el.style.width = w + 'px';
+      el.style.height = h + 'px';
+      el.style.transform = 'translate(' + c.dx + 'px,' + c.dy + 'px)';
+    }
+  }
+
+  /** 用当前裁剪区域刷新左侧预览（小尺寸，拖动时也扛得住） */
+  function pfCropPreview() {
+    var c = PF.crop;
+    if (!c) return;
+    var SMALL = 96;
+    var frame = PF_CROP_FRAME;
+    var scale = c.cover * c.zoom;
+    var canvas = document.createElement('canvas');
+    canvas.width = SMALL;
+    canvas.height = SMALL;
+    canvas.getContext('2d').drawImage(
+      c.img, -c.dx / scale, -c.dy / scale, frame / scale, frame / scale, 0, 0, SMALL, SMALL
+    );
+    var prev = $('#pfAvatarPreview');
+    if (prev) prev.src = canvas.toDataURL('image/png');
+  }
+
+  /** 把裁剪框里的可见区域渲染成 460×460 的正方形图片 */
+  function pfCropToFile(cb) {
+    var c = PF.crop;
+    if (!c) { cb(null); return; }
+    var OUT = 460;
+    var frame = PF_CROP_FRAME;
+    var scale = c.cover * c.zoom;
+    var sx = -c.dx / scale;
+    var sy = -c.dy / scale;
+    var size = frame / scale;
+    var canvas = document.createElement('canvas');
+    canvas.width = OUT;
+    canvas.height = OUT;
+    canvas.getContext('2d').drawImage(c.img, sx, sy, size, size, 0, 0, OUT, OUT);
+    canvas.toBlob(function (blob) {
+      if (!blob) { cb(null); return; }
+      var base = String(PF.cropName || 'avatar').replace(/\.[^.]+$/, '');
+      cb(new File([blob], base + '.png', { type: 'image/png' }));
+    }, 'image/png');
+  }
+
+  /** 清掉未提交的裁剪状态，并释放 blob URL */
+  function pfResetCrop() {
+    if (PF.cropUrl) {
+      try {
+        URL.revokeObjectURL(PF.cropUrl);
+      } catch (e) {
+        /* 忽略：URL 已失效也不影响后续 */
+      }
+    }
+    PF.crop = null;
+    PF.cropName = '';
+    PF.cropUrl = '';
+    PF.avatarFile = null;
+    var box = $('#pfCrop');
+    if (box) box.hidden = true;
+  }
+
+  function bindProfileTabEvents() {
+    /* 字数计数器 */
+    ['pfBio', 'pfStatusMessage'].forEach(function (id) {
+      var el = $('#' + id);
+      var counter = $('#' + id + 'Count');
+      if (!el || !counter) return;
+      var max = Number(el.getAttribute('maxlength')) || 0;
+      var sync = function () {
+        counter.textContent = el.value.length + ' / ' + max;
+        counter.classList.toggle('is-over', max > 0 && el.value.length > max);
+      };
+      el.addEventListener('input', sync);
+      sync();
+    });
+
+    /* 状态 emoji 快捷选择 */
+    var picks = $('#pfEmojiPicks');
+    if (picks) {
+      picks.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-emoji]');
+        if (!b) return;
+        var input = $('#pfStatusEmoji');
+        input.value = b.dataset.emoji;
+        input.focus();
+      });
+    }
+
+    var clearBtn = $('#pfClearStatus');
+    if (clearBtn) clearBtn.addEventListener('click', handleClearStatus);
+
+    var addBtn = $('#pfAddSocial');
+    if (addBtn) {
+      addBtn.addEventListener('click', function () {
+        var list = $('#pfSocialList');
+        if (list.querySelectorAll('[data-social]').length >= 10) {
+          toast('社交链接最多 10 条', 'error');
+          return;
+        }
+        var row = document.createElement('div');
+        row.className = 'pf-social-row';
+        row.innerHTML =
+          '<input class="pf-input" data-social type="url" placeholder="https://x.com/yourname">' +
+          '<button type="button" class="icon-btn pf-social-del" data-del-social aria-label="删除该行">✕</button>';
+        list.appendChild(row);
+      });
+    }
+    var list = $('#pfSocialList');
+    if (list) {
+      list.addEventListener('click', function (e) {
+        var del = e.target.closest('[data-del-social]');
+        if (!del) return;
+        del.closest('.pf-social-row').remove();
+      });
+    }
+
+    /* 头像上传的验证码视图 */
+    var vcode = $('#pfAvatarCode');
+    if (vcode) {
+      vcode.addEventListener('input', function () {
+        var len = pfCodeLen(PF.avatarVerify);
+        vcode.value = vcode.value.replace(/\D/g, '').slice(0, len || 12);
+        var b = $('#pfAvatarVerifyBtn');
+        if (b) b.disabled = !pfCodeOk(vcode.value, len);
+      });
+      vcode.addEventListener('keydown', function (e) {
+        var b = $('#pfAvatarVerifyBtn');
+        if (e.key === 'Enter' && b && !b.disabled) submitAvatarCode();
+      });
+      setTimeout(function () { vcode.focus(); }, 80);
+      startPfResendCountdown(0);
+    }
+    var vbtn = $('#pfAvatarVerifyBtn');
+    if (vbtn) vbtn.addEventListener('click', submitAvatarCode);
+    var rbtn = $('#pfAvatarResend');
+    if (rbtn) rbtn.addEventListener('click', resendAvatarCode);
+    var bbtn = $('#pfAvatarBack');
+    if (bbtn) {
+      bbtn.addEventListener('click', function () {
+        clearPfResendTimer();
+        PF.avatarVerify = null;
+        /* 返回重选时也要清掉未提交的裁剪，否则回到表单后点上传会把旧图传上去 */
+        pfResetCrop();
+        renderProfileBody();
+      });
+    }
+
+    /* 头像选择 */
+    var pick = $('#pfAvatarPick');
+    if (pick) {
+      /* 用 <label for> 原生关联文件输入，不再用 JS 触发 click ——
+         部分浏览器/无头环境下对 display:none 的 input 调用 .click() 不会弹选择器 */
+      /* 裁剪框：拖动调整位置 */
+      var cropFrame = $('#pfCropFrame');
+      if (cropFrame) {
+        var drag = null;
+        cropFrame.addEventListener('pointerdown', function (e) {
+          if (!PF.crop) return;
+          drag = { x: e.clientX, y: e.clientY, dx: PF.crop.dx, dy: PF.crop.dy };
+          cropFrame.setPointerCapture(e.pointerId);
+          cropFrame.style.cursor = 'grabbing';
+        });
+        cropFrame.addEventListener('pointermove', function (e) {
+          if (!drag || !PF.crop) return;
+          PF.crop.dx = drag.dx + (e.clientX - drag.x);
+          PF.crop.dy = drag.dy + (e.clientY - drag.y);
+          pfCropApply();
+        });
+        var stopDrag = function () {
+          drag = null;
+          cropFrame.style.cursor = 'grab';
+          pfCropPreview();
+        };
+        cropFrame.addEventListener('pointerup', stopDrag);
+        cropFrame.addEventListener('pointercancel', stopDrag);
+      }
+
+      /* 裁剪框：滑块缩放（1x ~ 3x） */
+      var cropZoom = $('#pfCropZoom');
+      if (cropZoom) {
+        cropZoom.addEventListener('input', function () {
+          if (!PF.crop) return;
+          PF.crop.zoom = 1 + (Number(cropZoom.value) || 0) / 50;
+          pfCropApply();
+          pfCropPreview();
+        });
+      }
+
+      $('#pfAvatarFile').addEventListener('change', function (e) {
+        var f = e.target.files && e.target.files[0];
+        if (!f) return;
+        if (!/^image\//i.test(f.type)) { toast('请选择图片文件', 'error'); return; }
+        pfOpenCropper(f);
+      });
+    }
+  }
+
+  function setProfileTab(tab) {
+    /* 切换分区时清掉未提交的裁剪：否则切回头像再点上传，会把上一次选的图悄悄传上去 */
+    if (tab !== PF.tab) pfResetCrop();
+    PF.tab = tab;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-ptab]'), function (b) {
+      var on = b.dataset.ptab === tab;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    var hints = {
+      basic: '',
+      status: '状态是 GitHub 的「自定义状态」，会显示在头像旁',
+      social: '',
+      avatar: '头像需要网页会话，密码仅本次使用'
+    };
+    $('#profileFootHint').textContent = hints[tab] || '';
+    var save = $('#profileSaveBtn');
+    save.textContent = tab === 'avatar' ? '上传头像' : '保存';
+    /* 验证码视图下由「提交验证」按钮负责提交，隐藏底部保存按钮避免误操作 */
+    save.hidden = !!(tab === 'avatar' && PF.avatarVerify);
+    var rbtnTop = $('#pfAvatarResend');
+    if (rbtnTop) updatePfResendBtn();
+    renderProfileBody();
+  }
+
+  /** 记录加载时的原始值，保存时只提交真正改动过的字段 */
+  function pfSnapshot(d) {
+    var p = (d && d.profile) || {};
+    var prim = ((d && d.emails) || []).filter(function (x) { return x.primary; })[0] || null;
+    return {
+      name: p.name || '',
+      bio: p.bio || '',
+      company: p.company || '',
+      location: p.location || '',
+      blog: p.blog || '',
+      twitter_username: p.twitterUsername || '',
+      email: prim && prim.visibility === 'public' ? prim.email : p.email || '',
+      hireable: !!p.hireable
+    };
+  }
+
+  function loadProfileEditor() {
+    /* 竞态守卫：快速切账号时，旧响应不能覆盖新面板（否则会把 A 的资料存到 B 上） */
+    var seq = ++pfReqSeq;
+    var accId = PF.accountId;
+    var acc = findAccount(accId);
+    $('#profileModalLogin').textContent = acc ? acc.login || '（未命名）' : '';
+    $('#profileModalBody').innerHTML =
+      '<div class="pf-loading"><span class="skeleton sk-line" style="width:40%"></span>' +
+      '<span class="skeleton" style="height:120px;border-radius:10px"></span></div>';
+    return api('/api/accounts/' + accId + '/profile')
+      .then(function (data) {
+        if (seq !== pfReqSeq || accId !== PF.accountId) return;
+        PF.data = data;
+        PF.orig = pfSnapshot(data);
+        renderProfileBody();
+      })
+      .catch(function (err) {
+        if (seq !== pfReqSeq) return;
+        $('#profileModalBody').innerHTML =
+          '<div class="pf-error"><b>无法加载资料</b><p>' + esc(err.message) + '</p>' +
+          '<p class="pf-hint">需要该账号带有有效 Token。若是「账号密码」方式添加的账号，请先执行「密码换 Token」。</p></div>';
+      });
+  }
+
+  function openProfileEditor(account) {
+    PF.accountId = Number(account.id);
+    PF.data = null;
+    PF.orig = null;
+    PF.avatarFile = null;
+    PF.pendingAvatar = '';
+    /* 裁剪状态必须清掉：否则打开另一个账号时会沿用上一个账号选好的图 */
+    pfResetCrop();
+    clearPfResendTimer();
+    PF.avatarVerify = null;
+    pfResendLeft = 0;
+    $('#profileModalBody').innerHTML = '';
+    setProfileTab('basic');
+    openModal($('#profileModal'));
+    loadProfileEditor();
+  }
+
+  function pfVal(id) {
+    var el = $('#' + id);
+    return el ? el.value.trim() : '';
+  }
+
+  function saveBasicTab() {
+    var all = {
+      name: pfVal('pfName'),
+      bio: pfVal('pfBio'),
+      company: pfVal('pfCompany'),
+      location: pfVal('pfLocation'),
+      blog: pfVal('pfBlog'),
+      twitter_username: pfVal('pfTwitter'),
+      email: pfVal('pfEmail'),
+      hireable: $('#pfHireable').checked
+    };
+    /* emoji 是代理对，length 会翻倍 —— 按码点计算，与后端保持一致 */
+    if (Array.from(all.bio).length > PF.data.limits.bioMax) {
+      toast('简介最多 ' + PF.data.limits.bioMax + ' 个字符', 'error');
+      return Promise.reject(new Error('bio too long'));
+    }
+
+    /* 只提交真正改动过的字段：避免把未填写的字段（如空 email）无谓地推给 GitHub 触发 422 */
+    var orig = PF.orig || {};
+    var payload = {};
+    Object.keys(all).forEach(function (k) {
+      if (all[k] !== orig[k]) payload[k] = all[k];
+    });
+
+    var visEl = $('#pfEmailVisibility');
+    var prim = (PF.data.emails || []).filter(function (x) { return x.primary; })[0] || null;
+    var visChanged = !!(visEl && !visEl.disabled && prim && prim.visibility !== visEl.value);
+
+    if (!Object.keys(payload).length && !visChanged) {
+      toast('没有任何改动', 'success');
+      return Promise.resolve(null);
+    }
+    var result = { profile: null, visibility: visChanged ? visEl.value : null };
+
+    var chain = Promise.resolve(null);
+    if (Object.keys(payload).length) {
+      chain = api('/api/accounts/' + PF.accountId + '/profile', { method: 'PATCH', body: payload });
+    }
+    return chain.then(function (r) {
+      if (r && r.profile) result.profile = r.profile;
+      if (!visChanged) return result;
+      return api('/api/accounts/' + PF.accountId + '/email-visibility', {
+        method: 'PATCH',
+        body: { visibility: visEl.value }
+      }).then(function () {
+        return result;
+      });
+    }).then(function () {
+      toast('资料已保存到 GitHub', 'success');
+      return result;
+    });
+  }
+
+  function saveStatusTab() {
+    var exp = pfVal('pfStatusExpires');
+    var body = {
+      emoji: pfVal('pfStatusEmoji'),
+      message: pfVal('pfStatusMessage'),
+      limitedAvailability: $('#pfStatusLimited').checked
+    };
+    /* 默认「保持现有设置」：不发送 expiresAt，避免只改文字却把原有的过期时间清掉 */
+    if (exp !== 'keep') {
+      var expiresAt = '';
+      if (exp) {
+        var ms = { '30m': 30, '1h': 60, '4h': 240, '1d': 1440, '7d': 10080 }[exp];
+        expiresAt = new Date(Date.now() + ms * 60 * 1000).toISOString();
+      }
+      body.expiresAt = expiresAt;
+    }
+    return api('/api/accounts/' + PF.accountId + '/status', {
+      method: 'PUT',
+      body: body
+    }).then(function (r) {
+      PF.data.status = r.status;
+      toast(r.status ? '状态已更新' : '状态已清除', 'success');
+    });
+  }
+
+  function saveSocialTab() {
+    /* 关键守卫：面板还没加载完时 [data-social] 为空，提交空数组会把 GitHub 上的链接全删掉 */
+    var list = $('#pfSocialList');
+    if (!list || !PF.data) {
+      return Promise.reject(new Error('资料尚未加载完成，请稍候再试'));
+    }
+    var urls = Array.prototype.map.call(list.querySelectorAll('[data-social]'), function (el) {
+      return el.value.trim();
+    }).filter(Boolean);
+    return api('/api/accounts/' + PF.accountId + '/social', { method: 'PUT', body: { urls: urls } }).then(function (r) {
+      if (PF.data) PF.data.socialAccounts = r.socialAccounts;
+      toast('社交链接已保存（新增 ' + r.added.length + ' · 移除 ' + r.removed.length + '）', 'success');
+    });
+  }
+
+  function saveAvatarTab() {
+    var pwd = pfVal('pfAvatarPassword');
+    if (!PF.crop) { toast('请先选择一张图片', 'error'); return Promise.reject(new Error('no file')); }
+    /* 快照发起时的账号：裁剪/读文件/上传都是异步的，期间用户可能已经切到别的账号 */
+    var reqAccountId = PF.accountId;
+    var stale = function () { return PF.accountId !== reqAccountId; };
+    /* 密码可以不填：后端会优先复用已保存的登录状态 */
+    return new Promise(function (resolve, reject) {
+      /* 先把裁剪框里的正方形区域渲染成 460×460，再上传 */
+      pfCropToFile(function (file) {
+        if (!file) { reject(new Error('裁剪失败')); return; }
+        if (stale()) { reject(new Error('账号已切换，已取消本次上传')); return; }
+        PF.avatarFile = file;
+        var fr = new FileReader();
+        fr.onload = function () {
+          if (stale()) { reject(new Error('账号已切换，已取消本次上传')); return; }
+          var dataUrl = String(fr.result);
+          var base64 = dataUrl.split(',')[1] || '';
+          api('/api/accounts/' + reqAccountId + '/avatar', {
+            method: 'POST',
+            body: { password: pwd, filename: PF.avatarFile.name, mime: PF.avatarFile.type, data: base64 }
+          }).then(resolve, reject);
+        };
+        fr.onerror = function () { reject(new Error('读取图片失败')); };
+        fr.readAsDataURL(file);
+      });
+    }).then(function (r) {
+      /* 上传成功时若已切到别的账号，不能再把结果写进当前面板 */
+      if (stale()) return null;
+      PF.avatarFile = null;
+      var pick = $('#pfAvatarFile');
+      if (pick) pick.value = '';
+      toast('头像已更新', 'success');
+      if (r && r.avatarUrl) PF.pendingAvatar = r.avatarUrl;
+      return loadAccounts().then(loadProfileEditor).catch(function () {});
+    });
+  }
+
+  function handleProfileSave() {
+    var btn = $('#profileSaveBtn');
+    if (btn.dataset.busy === '1') return;
+    /* 快照发起时的账号，供异步错误分支判断是否已经切号 */
+    var reqAccountId = PF.accountId;
+    /* 面板尚未渲染出表单（加载中 / 加载失败）时直接拦截，避免抛出技术性 TypeError */
+    if (!PF.data || !$('#profileModalBody').querySelector('.pf-section')) {
+      toast('资料尚未加载完成，请稍候', 'error');
+      return;
+    }
+    var runner =
+      PF.tab === 'basic' ? saveBasicTab :
+      PF.tab === 'status' ? saveStatusTab :
+      PF.tab === 'social' ? saveSocialTab : saveAvatarTab;
+    if (PF.tab === 'avatar') setBusy(btn, true, '上传中…');
+    else setBusy(btn, true, '保存中…');
+    btn.dataset.busy = '1';
+    Promise.resolve()
+      .then(runner)
+      .then(function (res) {
+        /* 基本资料：GitHub 的 PATCH 响应就是权威值，直接采用。
+           不再回读 GET /user —— GitHub 存在短暂的 read-after-write 副本延迟，
+           回读有可能拿到旧值，用户会以为「保存没生效」。 */
+        if (PF.tab === 'basic' && res && res.profile && PF.data) {
+          PF.data.profile = res.profile;
+          if (res.visibility) {
+            (PF.data.emails || []).forEach(function (m) {
+              if (m.primary) m.visibility = res.visibility;
+            });
+          }
+          PF.orig = pfSnapshot(PF.data);
+          renderProfileBody();
+          return null;
+        }
+        return loadProfileEditor();
+      })
+      .catch(function (err) {
+        /* GitHub 要求邮箱验证码 / 两步验证码：切到验证码输入视图，图片与账号已暂存在服务端 */
+        if (err && err.status === 428 && err.data && err.data.code === 'NEED_VERIFY') {
+          /* 迟到的 428 不能写进已经切换过的账号面板 */
+          if (PF.accountId !== reqAccountId) return;
+          PF.avatarVerify = {
+            verifyId: err.data.verifyId,
+            verifyType: err.data.verifyType,
+            hint: err.data.hint,
+            codeLength: Number(err.data.codeLength) || 0,
+            expiresInSec: err.data.expiresInSec
+          };
+          var saveBtn = $('#profileSaveBtn');
+          if (saveBtn) saveBtn.hidden = true;
+          renderProfileBody();
+          toast('GitHub 要求安全验证，请输入验证码', 'success');
+          return;
+        }
+        if (err && err.message && /too long|no file|no password|尚未加载完成/.test(err.message)) {
+          if (/尚未加载完成/.test(err.message)) toast(err.message, 'error');
+          return;
+        }
+        toast(err.message || '保存失败', 'error', 5200);
+      })
+      .then(function () {
+        setBusy(btn, false);
+        btn.dataset.busy = '0';
+      });
+  }
+
+  function handleClearStatus() {
+    api('/api/accounts/' + PF.accountId + '/status', { method: 'DELETE' })
+      .then(function () {
+        toast('状态已清除', 'success');
+        return loadProfileEditor();
+      })
+      .catch(function (err) { toast(err.message, 'error', 5200); });
+  }
+
+  function bindProfileModal() {
+    var modal = $('#profileModal');
+    if (!modal) return;
+    modal.addEventListener('click', function (e) {
+      var tab = e.target.closest('[data-ptab]');
+      if (tab) { setProfileTab(tab.dataset.ptab); return; }
+    });
+    $('#profileSaveBtn').addEventListener('click', handleProfileSave);
+  }
+
+  // 卡片操作委托
   /** 卡片操作（事件委托）：账号总览卡片与窄屏详情模态内的 验证/仓库/编辑/删除/复制/显示 共用 */
   function handleAccountCardAction(event) {
     var btn = event.target.closest('[data-action]');
@@ -2340,11 +3274,16 @@ var STAR_STATUS_META = {
       if (acc3) openRepos(acc3);
       return;
     }
+    if (action === 'profile') {
+      var acc4 = findAccount(id);
+      if (acc4) openProfileEditor(acc4);
+      return;
+    }
     if (action === 'reveal') return handleReveal(card, btn);
     if (action === 'copy-cred') return handleCopyCred(card, btn);
   }
 
-  /* ----------------------------- 头像加载失败回退 ----------------------------- */
+  // 头像加载失败回退
   /** 头像加载失败 → 首字母回退（对 .avatar 与 .bs-avatar 两种头像均生效） */
   function bindAvatarFallback(root) {
     if (!root) return;
@@ -2364,7 +3303,7 @@ var STAR_STATUS_META = {
     );
   }
 
-  /* ----------------------------- 事件绑定 ----------------------------- */
+  // 事件绑定
   function bindEvents() {
     /* 主题 */
     $('#themeToggle').addEventListener('click', function () {
@@ -2427,8 +3366,10 @@ var STAR_STATUS_META = {
 
     /* 密码换 Token：验证码续接视图交互 */
     $('#atVerifyCode').addEventListener('input', function () {
-      var v = this.value.replace(/\D/g, '').slice(0, 6);
-      if (this.value !== v) this.value = v;
+      /* 位数由后端给；未知时仅限制上限，不做固定长度截断 */
+      var limit = pfCodeLen(atVerifyState) || 12;
+      var el = $('#atVerifyCode');
+      if (el.value.replace(/\D/g, '').length > limit) el.value = el.value.replace(/\D/g, '').slice(0, limit);
       updateAtVerifySubmit();
     });
     $('#atVerifyCode').addEventListener('keydown', function (event) {
@@ -2458,6 +3399,7 @@ var STAR_STATUS_META = {
     /* 头像加载失败 → 首字母回退 */
     bindAvatarFallback($('#accountGrid'));
     bindAvatarFallback($('#accountDetailModal'));
+    bindProfileModal();
 
     /* 编辑 / 删除 / 仓库模态 */
     $('#editForm').addEventListener('submit', handleEditSubmit);
@@ -2636,7 +3578,7 @@ var STAR_STATUS_META = {
     });
   }
 
-  /* ----------------------------- 启动 ----------------------------- */
+  // 启动
   /** 首屏数据（统计 + 账号）加载结束后移除启动遮罩 */
   function startDataLoading() {
     Promise.all([loadStats(), loadAccounts()]).then(finishBoot);

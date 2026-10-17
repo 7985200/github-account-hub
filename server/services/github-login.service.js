@@ -24,6 +24,7 @@ const path = require('path');
 const config = require('../config');
 const proxy = require('./proxy.service');
 const logger = require('../utils/logger');
+const { pruneDebugFiles } = require('../utils/debug-files');
 
 // 目标站点（可用 GITHUB_WEB_ORIGIN 覆盖，便于自动化测试与 GitHub Enterprise）
 const ORIGIN = process.env.GITHUB_WEB_ORIGIN || 'https://github.com';
@@ -102,6 +103,21 @@ function extractCsrf(html) {
  * 注意：必须校验提取结果非空才返回 —— GitHub 的 flash 容器内常先出现空白文本节点，
  *       若不过滤会拿到空串并提前返回（历史 bug：导致「密码错误」被误判为未知错误）
  */
+/**
+ * 判断提取到的文案是否「可以给用户看」。
+ * GitHub 的页面里混有未渲染的前端模板占位符（实测会取到 `{{ message }}`），
+ * 这类文本必须丢弃，否则会原样弹给用户。
+ */
+function isDisplayableMessage(text) {
+  const t = String(text || '').trim();
+  if (t.length < 4 || t.length > 300) return false;
+  if (/\{\{|\}\}|\$\{|<%|%>/.test(t)) return false; // 模板占位符
+  if (/[<>]|="|class=|id=/.test(t)) return false; // HTML 属性泄漏（弱兜底正则可能把标签属性带出来）
+  if (/^[\s\W_]+$/.test(t)) return false; // 纯符号
+  if (!/[A-Za-z\u4e00-\u9fa5]/.test(t)) return false; // 至少含一个中英文字母
+  return true;
+}
+
 function extractFlashError(html) {
   const s = String(html);
   const patterns = [
@@ -115,7 +131,7 @@ function extractFlashError(html) {
   for (const re of patterns) {
     const m = s.match(re);
     const text = m && m[1] ? m[1].replace(/\s+/g, ' ').trim() : '';
-    if (text && text.length >= 4) return text;
+    if (isDisplayableMessage(text)) return text;
   }
   return '';
 }
@@ -140,7 +156,10 @@ function buildTokenNote(base) {
  * 当 GitHub 要求额外验证（邮箱验证码 / 两步验证）时，需要保持登录会话（cookie jar）
  * 供用户输入验证码后继续 —— 会话仅存内存，10 分钟过期，不落库、不写日志
  */
-const pendingVerifications = new Map(); // verifyId -> { jar, dispatcher, login, description, channel, createdAt, verifyType, codeForm, resendForm, hint }
+/* verifyId -> { jar, dispatcher, login, description, channel, createdAt,
+   verifyType, codeForm, resendForm, hint, purpose, payload }
+   purpose: 'token'（默认，验证后建 Token）| 'avatar'（验证后继续头像上传） */
+const pendingVerifications = new Map();
 const VERIFY_TTL_MS = 10 * 60 * 1000;
 const MAX_PENDING = 30;
 
@@ -180,6 +199,23 @@ function takePending(verifyId) {
   return sess;
 }
 
+/**
+ * 取出 pending 并从表中移除，但**不关闭 dispatcher** —— 用于把已验证的会话
+ * 交接给调用方继续使用（如头像上传）。调用方用完需自行 close。
+ */
+function takeOutPending(verifyId) {
+  const sess = takePending(verifyId);
+  pendingVerifications.delete(String(verifyId));
+  return sess;
+}
+
+/** 关闭某条 pending 的 dispatcher（不抛错） */
+function closeSessionDispatcher(sess) {
+  if (sess && sess.dispatcher && typeof sess.dispatcher.close === 'function') {
+    sess.dispatcher.close().catch(() => {});
+  }
+}
+
 function dropPending(verifyId) {
   const sess = pendingVerifications.get(String(verifyId || ''));
   if (sess) {
@@ -211,10 +247,12 @@ function parseVerifyPage(html, location) {
     const inputs = [...fm.matchAll(/<input[^>]*>/gi)]
       .map((t) => {
         const tag = t[0];
+        const maxLen = Number((tag.match(/maxlength="(\d+)"/i) || [])[1] || 0);
         return {
           name: (tag.match(/name="([^"]*)"/i) || [])[1] || '',
           value: (tag.match(/value="([^"]*)"/i) || [])[1] || '',
           type: ((tag.match(/type="([^"]*)"/i) || [])[1] || 'text').toLowerCase(),
+          maxLength: Number.isFinite(maxLen) ? maxLen : 0,
         };
       })
       .filter((i) => i.name);
@@ -228,7 +266,13 @@ function parseVerifyPage(html, location) {
       (i) => i.type !== 'hidden' && /otp|code|verification|pin|device/i.test(i.name)
     );
     if (codeInput) {
-      codeForm = { action: f.action, method: f.method, hidden: f.inputs.filter((i) => i.type === 'hidden'), codeField: codeInput.name };
+      codeForm = {
+        action: f.action,
+        method: f.method,
+        hidden: f.inputs.filter((i) => i.type === 'hidden'),
+        codeField: codeInput.name,
+        codeLength: codeInput.maxLength || 0,
+      };
       break;
     }
   }
@@ -236,7 +280,13 @@ function parseVerifyPage(html, location) {
     for (const f of forms) {
       const textInput = f.inputs.find((i) => ['text', 'tel', 'number', 'password'].includes(i.type));
       if (textInput) {
-        codeForm = { action: f.action, method: f.method, hidden: f.inputs.filter((i) => i.type === 'hidden'), codeField: textInput.name };
+        codeForm = {
+          action: f.action,
+          method: f.method,
+          hidden: f.inputs.filter((i) => i.type === 'hidden'),
+          codeField: textInput.name,
+          codeLength: textInput.maxLength || 0,
+        };
         break;
       }
     }
@@ -258,6 +308,7 @@ function parseVerifyPage(html, location) {
             method: 'post',
             hidden: [{ name: 'authenticity_token', value: token }],
             codeField: fieldMatch[1],
+            codeLength: 0, // React 内嵌数据里拿不到 maxlength，交给前端按宽松策略处理
           };
         }
       } catch {
@@ -319,6 +370,91 @@ function parseVerifyPage(html, location) {
  * @param {{ login: string, password: string, description?: string }} payload
  * @returns {Promise<{ token: string, scopes: string[], channel: string, durationMs: number }>}
  */
+/**
+ * 识别 GitHub 登录页上的「非密码错误的拦截原因」。
+ *
+ * 背景：新版登录页把 flash 文案交给前端渲染，服务端 HTML 里只留 `{{ message }}` 占位符；
+ * 真实原因反而以**正文纯文本**出现，例如限流提示：
+ *   "There have been several failed attempts to sign in from this account or IP address.
+ *    Please wait a while and try again later."
+ * 若不做识别，用户会看到「登录未完成（HTTP 302）」这种毫无帮助的提示，
+ * 甚至被误导为「账号或密码错误」。
+ *
+ * @returns {{code:string, message:string, httpStatus:number}|null}
+ */
+function detectLoginBlocker(html) {
+  const src = String(html || '');
+  const text = src
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  if (/several failed attempts to sign in/i.test(text) || /try again later/i.test(text) && /failed attempts/i.test(text)) {
+    return {
+      code: 'RATE_LIMITED',
+      message:
+        'GitHub 检测到该账号或当前 IP 短时间内登录失败次数过多，已临时限制登录。请等待一段时间（通常几十分钟到数小时）后再试。',
+      httpStatus: 429,
+    };
+  }
+  if (/account has been (suspended|flagged|locked)/i.test(text)) {
+    return { code: 'ACCOUNT_BLOCKED', message: '该 GitHub 账号已被限制或封禁，无法通过网页登录。', httpStatus: 403 };
+  }
+  if (/unusual activity|verify your identity|we need to verify/i.test(text)) {
+    return {
+      code: 'NEED_VERIFY',
+      message: 'GitHub 要求先进行身份验证（非常用设备/异常活动）。请在浏览器中先用该账号登录一次后再试。',
+      httpStatus: 428,
+    };
+  }
+  return null;
+}
+
+
+/**
+ * 按「真实浏览器」的方式拼登录表单。
+ * 关键：登录页除 login/password 外还有 timestamp、timestamp_secret、蜜罐
+ * required_field_xxx、webauthn-* 等字段，浏览器会全部提交。
+ * 只挑 4 个字段提交，可能被判为非正常请求而返回通用的凭据错误。
+ */
+/**
+ * 密码被拒时的统一提示。
+ * 实测：GitHub 对「密码确实不对」和「静默拒绝（代理/机房 IP、高风险账号）」
+ * 返回的是同一句 Incorrect username or password.，且不会有任何限流提示；
+ * 这种情况下等多久都不会恢复（实测静默 70 分钟仍失败），所以不能引导用户"等一会儿再试"。
+ */
+const BAD_CREDENTIALS_HINT =
+  '登录失败：GitHub 返回「Incorrect username or password.」，且没有出现限流提示。只有两种可能：' +
+  '① 该账号当前的密码已经不是这里填写的密码；' +
+  '② GitHub 对当前出口 IP 或该账号做了静默拒绝（机房/代理 IP、新注册账号常见，表现就是这句通用错误）。' +
+  '建议先在浏览器里换一个网络，用同一密码登录一次确认；或改用「Token 添加」方式。';
+
+function attrOf(tag, name) {
+  const re = new RegExp(`(?<![-\\w])${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'>]+))`, 'i');
+  const m = re.exec(tag);
+  if (!m) return '';
+  return (m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4] || '').trim();
+}
+
+function buildLoginBody(html, { login, password }) {
+  const src = String(html || '');
+  const formMatch = src.match(/<form[^>]*action="\/session"[^>]*>([\s\S]*?)<\/form>/i);
+  const scope = formMatch ? formMatch[1] : src;
+  const body = new URLSearchParams();
+  for (const tag of scope.match(/<input\b[^>]*>/gi) || []) {
+    const type = (attrOf(tag, 'type') || 'text').toLowerCase();
+    if (['submit', 'button', 'file', 'image', 'reset'].includes(type)) continue;
+    const name = attrOf(tag, 'name');
+    if (!name) continue;
+    if (name === 'login') { body.append(name, login); continue; }
+    if (name === 'password') { body.append(name, password); continue; }
+    body.append(name, attrOf(tag, 'value'));
+  }
+  if (!body.has('commit')) body.append('commit', 'Sign in');
+  return body;
+}
+
 async function loginAndCreateToken({ login, password, description = 'ghhub-auto' } = {}) {
   const username = String(login || '').trim();
   const pwd = String(password || '');
@@ -331,7 +467,7 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
   } catch (err) {
     throw new WebLoginError('PROXY_UNAVAILABLE', err.message, 503);
   }
-  const dispatcher = channel === 'direct' ? undefined : new ProxyAgent(channel);
+  const dispatcher = channel === 'direct' ? undefined : proxy.buildDispatcher(channel);
   const jar = new CookieJar();
   const t0 = Date.now();
   let keepSession = false; // 需要额外验证时保持会话（dispatcher 交由验证会话持有）
@@ -346,12 +482,9 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
     if (!csrf1) throw new WebLoginError('NETWORK', '登录页结构异常（未找到 CSRF token）', 502);
 
     /* 2. 提交账号密码 */
-    const body = new URLSearchParams({
-      login: username,
-      password: pwd,
-      authenticity_token: csrf1,
-      commit: 'Sign in',
-    });
+    // 按浏览器的方式提交登录页的完整表单（含 timestamp / 蜜罐等字段）
+    const body = buildLoginBody(loginPage.text, { login: username, password: pwd });
+    logger.info('提交登录表单', { login: username, fields: [...body.keys()].length });
     const res2 = await request(
       `${ORIGIN}/session`,
       {
@@ -392,6 +525,7 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
           verifyId,
           verifyType: ctx.verifyType,
           hint: ctx.hint,
+          codeLength: ctx.codeLength || 0,
           expiresInSec: Math.floor(VERIFY_TTL_MS / 1000),
         };
       }
@@ -410,12 +544,21 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
         loginStatus: res2.status,
         location: loc,
         flash: flash.slice(0, 140),
+        // 用户拿这个 id 找 GitHub 支持时，对方才能查到这次拒登的具体原因
+        requestId: String(res2.headers.get('x-github-request-id') || ''),
         tokenPageStatus: newPage.status,
       });
 
+      // ⓪ 先排除「非密码错误」的拦截（限流 / 封禁 / 要求身份验证）——必须早于密码错误判断
+      const blocker = detectLoginBlocker(res2.text);
+      if (blocker) {
+        logger.warn('网页登录被 GitHub 拦截', { login: username, code: blocker.code });
+        throw new WebLoginError(blocker.code, blocker.message, blocker.httpStatus);
+      }
+
       // ① 明确的密码错误（GitHub 在登录页回显的 flash 文案）
       if (/incorrect username or password|invalid.{0,12}(login|credentials)/i.test(flash)) {
-        throw new WebLoginError('BAD_CREDENTIALS', '登录失败：账号或密码错误', 401);
+        throw new WebLoginError('BAD_CREDENTIALS', BAD_CREDENTIALS_HINT, 401);
       }
       // ② 人机验证 / 风控（无法自动完成）
       if (/data-sitekey|octocaptcha-frame|unusual activity|suspicious.{0,20}(activity|login)/i.test(res2.text)) {
@@ -569,6 +712,8 @@ async function createTokenWithSession({ jar, dispatcher, login, description, tok
 function saveVerifyDebug(html, url, login) {
   try {
     fs.mkdirSync(config.dataDir, { recursive: true });
+    /* 验证页含 CSRF token 与脱敏邮箱，只保留最近 5 份 */
+    pruneDebugFiles(config.dataDir, 'verify-debug-', 5);
     const file = path.join(config.dataDir, `verify-debug-${Date.now()}.html`);
     fs.writeFileSync(
       file,
@@ -661,6 +806,8 @@ async function tryBuildVerification({ loc, jar, dispatcher, login }) {
     verifyType: parsed.verifyType,
     hint: parsed.hint || fallbackHint,
     verifyPageUrl: target,
+    /* 验证码位数：0 表示页面没给 maxlength（未知），前端需按宽松策略处理 */
+    codeLength: (parsed.codeForm && parsed.codeForm.codeLength) || 0,
   };
 }
 
@@ -708,6 +855,32 @@ async function submitVerificationCode({ verifyId, code } = {}) {
     throw new WebLoginError('BAD_CODE', flash || '验证码不正确或已失效，请重新输入', 400);
   }
 
+  /* 非「建 Token」用途（如头像上传）：把已验证的会话交给调用方继续，
+     并顺手把「个人资料设置页」拉下来（这正是头像上传要解析的页面） */
+  if (sess.purpose && sess.purpose !== 'token') {
+    const settings = await request(`${ORIGIN}/settings/profile`, {}, { jar: sess.jar, dispatcher: sess.dispatcher });
+    const handed = takeOutPending(verifyId);
+    logger.info('验证码通过，网页会话已交接给调用方', {
+      login: sess.login,
+      purpose: sess.purpose,
+      settingsStatus: settings.status,
+    });
+    return {
+      sessionReady: true,
+      purpose: sess.purpose,
+      payload: handed.payload || null,
+      session: {
+        jar: handed.jar,
+        dispatcher: handed.dispatcher,
+        login: handed.login,
+        settingsHtml: settings.status === 200 ? settings.text : '',
+        settingsStatus: settings.status,
+        channel: proxy.maskProxy(handed.channel),
+      },
+      durationMs: Date.now() - t0,
+    };
+  }
+
   // 登录成功 → 创建 Token
   let created;
   try {
@@ -726,12 +899,12 @@ async function submitVerificationCode({ verifyId, code } = {}) {
   logger.info('验证码通过，网页登录自动创建 Token 成功', {
     login: sess.login,
     scopes: created.scopes.length,
-    channel: sess.channel,
+    channel: proxy.maskProxy(sess.channel),
   });
   return {
     token: created.token,
     scopes: created.scopes,
-    channel: sess.channel,
+    channel: proxy.maskProxy(sess.channel),
     durationMs: Date.now() - t0,
     note: created.note,
     login: sess.login,
@@ -767,9 +940,138 @@ async function resendVerificationCode({ verifyId } = {}) {
   return { hint: '验证码已重新发送' };
 }
 
+/**
+ * 只建立「网页登录会话」，不创建 Token。
+ * 供头像上传等必须在网页侧完成的操作用（GitHub 没有头像 API）。
+ *
+ * @returns {{jar:CookieJar, dispatcher:*, login:string, settingsHtml:string}}
+ * @throws {WebLoginError}
+ *   - NEED_VERIFY(428)：本次登录触发设备/邮箱验证，调用方需提示用户改用「密码换 Token」先过验证
+ *   - BAD_CREDENTIALS(401)：账号或密码错误
+ */
+async function openWebSession({ login, password, purpose = 'token', payload = null, awaitVerify = false } = {}) {
+  const username = String(login || '').trim();
+  const pwd = String(password || '');
+  if (!username) throw new WebLoginError('BAD_REQUEST', '请填写 GitHub 账号或邮箱', 400);
+  if (!pwd) throw new WebLoginError('BAD_REQUEST', '请填写密码', 400);
+
+  let channel;
+  try {
+    channel = await proxy.resolveWebChannel();
+  } catch (err) {
+    throw new WebLoginError('PROXY_UNAVAILABLE', err.message, 503);
+  }
+  const dispatcher = channel === 'direct' ? undefined : proxy.buildDispatcher(channel);
+  const jar = new CookieJar();
+
+  /* 从这里开始的所有路径都要保证 dispatcher 不泄漏：
+     成功时把 dispatcher 交给调用方（或存进 pending 会话），失败时在这里统一关闭。 */
+  try {
+  /* 1. 登录页 → CSRF + 匿名会话 */
+  const loginPage = await request(`${ORIGIN}/login`, {}, { jar, dispatcher });
+  if (loginPage.status !== 200) {
+    throw new WebLoginError('NETWORK', `无法打开 GitHub 登录页（HTTP ${loginPage.status}）`, 502);
+  }
+  const csrf1 = extractCsrf(loginPage.text);
+  if (!csrf1) throw new WebLoginError('NETWORK', '登录页结构异常（未找到 CSRF token）', 502);
+
+  /* 2. 提交账密（提交登录页的完整表单，不只是 4 个字段） */
+  const body = buildLoginBody(loginPage.text, { login: username, password: pwd });
+  logger.info('提交登录表单', { login: username, fields: [...body.keys()].length });
+  const res2 = await request(
+    `${ORIGIN}/session`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Referer: `${ORIGIN}/login`,
+        Origin: ORIGIN,
+      },
+      body: body.toString(),
+    },
+    { jar, dispatcher }
+  );
+
+  /* 3. 设备验证 / 两步验证：建立验证会话
+   *    - awaitVerify=true：把会话暂存进 pending，返回 428 + verifyId，
+   *      由前端弹出验证码输入框（与「密码换 Token」完全同一套机制）
+   *    - awaitVerify=false：直接抛错，由上层提示用户 */
+  const loc2 = String(res2.headers.get('location') || '');
+  if (/verified-device|two-factor|two_factor|sessions\/(verified|two)/i.test(loc2)) {
+    const ctx = await tryBuildVerification({ loc: loc2, jar, dispatcher, login: username });
+    if (ctx && awaitVerify) {
+      const verifyId = putPending({
+        jar,
+        dispatcher,
+        login: username,
+        purpose,
+        payload,
+        channel,
+        verifyType: ctx.verifyType,
+        hint: ctx.hint,
+        codeForm: ctx.codeForm,
+        resendForm: ctx.resendForm,
+        verifyPageUrl: ctx.verifyPageUrl,
+      });
+      logger.info('已建立验证会话（等待用户输入验证码）', {
+        login: username,
+        purpose,
+        verifyType: ctx.verifyType,
+      });
+      return {
+        needsVerify: true,
+        verifyId,
+        verifyType: ctx.verifyType,
+        hint: ctx.hint,
+        codeLength: ctx.codeLength || 0,
+        expiresInSec: Math.floor(VERIFY_TTL_MS / 1000),
+      };
+    }
+    throw new WebLoginError(
+      'NEED_VERIFY',
+      '该账号本次登录需要邮箱/设备验证码，但未能建立验证会话，请稍后重试。',
+      428
+    );
+  }
+
+  /* 4. 判定登录态：能打开「个人资料设置页」即为已登录，同时该页面正是待解析的头像表单来源 */
+  const settings = await request(`${ORIGIN}/settings/profile`, {}, { jar, dispatcher });
+  if (settings.status !== 200) {
+    /* 先看是不是被限流/封禁/要求身份验证 —— 这类原因不能报成「密码错误」 */
+    const blocker = detectLoginBlocker(res2.text) || detectLoginBlocker(settings.text);
+    if (blocker) {
+      logger.warn('网页登录被 GitHub 拦截', { login: username, code: blocker.code, from: 'openWebSession' });
+      throw new WebLoginError(blocker.code, blocker.message, blocker.httpStatus);
+    }
+    const flash = res2.status === 200 ? extractFlashError(res2.text) : '';
+    if (flash) {
+      const msg = /incorrect username or password|invalid.{0,12}(login|credentials)/i.test(flash)
+        ? BAD_CREDENTIALS_HINT
+        : `登录失败：${flash}`;
+      throw new WebLoginError('BAD_CREDENTIALS', msg, 401);
+    }
+    throw new WebLoginError(
+      'LOGIN_FAILED',
+      `登录未完成（个人资料设置页返回 HTTP ${settings.status}）。可能是 GitHub 要求额外验证或临时限制，请稍后重试。`,
+      428
+    );
+  }
+
+  return { jar, dispatcher, login: username, settingsHtml: settings.text };
+  } catch (err) {
+    if (dispatcher && typeof dispatcher.close === 'function') dispatcher.close().catch(() => {});
+    throw err;
+  }
+}
+
 module.exports = {
   loginAndCreateToken,
   submitVerificationCode,
   resendVerificationCode,
+  openWebSession,
   WebLoginError,
+  ORIGIN,
+  UA,
+  CookieJar,
+  closeSessionDispatcher,
 };

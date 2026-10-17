@@ -21,7 +21,7 @@
 </head>
 <body>
 
-  <!-- ================= 启动遮罩：鉴权与首屏渲染完成前隐藏界面 ================= -->
+  <!-- 启动遮罩：鉴权与首屏渲染完成前隐藏界面 -->
   <div class="app-boot" id="appBoot">
     <div class="app-boot-inner">
       <span class="spinner spinner-lg"></span>
@@ -29,7 +29,7 @@
     </div>
   </div>
 
-  <!-- ================= 顶栏 ================= -->
+  <!-- 顶栏 -->
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
@@ -139,7 +139,7 @@
 
   <main class="container">
 
-    <!-- ================= 账号总览 ================= -->
+    <!-- 账号总览 -->
     <section id="viewAccounts" class="view">
       <div class="stats-grid" id="statsGrid" aria-label="账号统计"></div>
 
@@ -195,7 +195,7 @@
       </div>
     </section>
 
-    <!-- ================= 操作日志 ================= -->
+    <!-- 操作日志 -->
     <section id="viewLogs" class="view" hidden>
       <div class="panel">
         <div class="panel-head">
@@ -237,7 +237,7 @@
 
   </main>
 
-  <!-- ================= 添加账号模态 ================= -->
+  <!-- 添加账号模态 -->
   <div class="modal-root" id="addModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
@@ -308,7 +308,7 @@
               <p class="at-verify-hint" id="atVerifyHint">验证码已发送，请查收后输入</p>
               <p class="at-verify-note">验证码 10 分钟内有效</p>
               <input id="atVerifyCode" class="at-code-input mono" type="text" inputmode="numeric" autocomplete="one-time-code"
-                     maxlength="6" placeholder="000000" spellcheck="false" aria-label="验证码">
+                     maxlength="12" placeholder="验证码" spellcheck="false" aria-label="验证码">
               <div class="form-error" id="atVerifyError" hidden></div>
               <div class="at-verify-actions">
                 <button type="button" class="btn btn-primary" id="atVerifySubmit" disabled>提交验证</button>
@@ -347,7 +347,7 @@
     </div>
   </div>
 
-  <!-- ================= 账号详情模态（窄屏点击紧凑卡片打开；置于其他弹层之前，便于编辑/仓库/删除在其上打开） ================= -->
+  <!-- 账号详情模态（窄屏点击紧凑卡片打开；置于其他弹层之前，便于编辑/仓库/删除在其上打开） -->
   <div class="modal-root" id="accountDetailModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accountDetailTitle">
@@ -359,7 +359,7 @@
     </div>
   </div>
 
-  <!-- ================= 仓库列表模态 ================= -->
+  <!-- 仓库列表模态 -->
   <div class="modal-root" id="reposModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="reposTitle">
@@ -378,7 +378,7 @@
     </div>
   </div>
 
-  <!-- ================= 编辑账号模态 ================= -->
+  <!-- 编辑账号模态 -->
   <div class="modal-root" id="editModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editTitle">
@@ -414,7 +414,7 @@
     </div>
   </div>
 
-  <!-- ================= 删除确认模态 ================= -->
+  <!-- 删除确认模态 -->
   <div class="modal-root" id="deleteModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card modal-danger" role="alertdialog" aria-modal="true" aria-labelledby="deleteTitle">
@@ -434,7 +434,32 @@
     </div>
   </div>
 
-  <!-- ================= 批量 Star 模态 ================= -->
+  <div class="modal-root" id="profileModal" hidden>
+    <div class="modal-overlay" data-close></div>
+    <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
+      <div class="modal-head">
+        <h3 id="profileModalTitle">自定义资料 · <span class="mono faint" id="profileModalLogin"></span></h3>
+        <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-tabs" role="tablist" aria-label="资料分区">
+        <button type="button" class="modal-tab is-active" data-ptab="basic" role="tab" aria-selected="true">基本资料</button>
+        <button type="button" class="modal-tab" data-ptab="status" role="tab" aria-selected="false">状态</button>
+        <button type="button" class="modal-tab" data-ptab="social" role="tab" aria-selected="false">社交链接</button>
+        <button type="button" class="modal-tab" data-ptab="avatar" role="tab" aria-selected="false">头像</button>
+      </div>
+      <div class="modal-body" id="profileModalBody">
+        <div class="pf-loading"><span class="skeleton sk-line" style="width:40%"></span><span class="skeleton" style="height:120px;border-radius:10px"></span></div>
+      </div>
+      <div class="modal-foot">
+        <span class="pf-foot-hint" id="profileFootHint"></span>
+        <span class="modal-foot-spacer"></span>
+        <button type="button" class="btn btn-ghost" data-close>取消</button>
+        <button type="button" class="btn btn-primary" id="profileSaveBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批量 Star 模态 -->
   <div class="modal-root" id="batchStarModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="batchStarTitle">
@@ -473,7 +498,7 @@
     </div>
   </div>
 
-  <!-- ================= 批量关注用户模态 ================= -->
+  <!-- 批量关注用户模态 -->
   <div class="modal-root" id="batchFollowModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="batchFollowTitle">
@@ -512,7 +537,7 @@
     </div>
   </div>
 
-  <!-- ================= 批量复刻仓库模态（与批量 Star 同构，id 前缀 bk） ================= -->
+  <!-- 批量复刻仓库模态（与批量 Star 同构，id 前缀 bk） -->
   <div class="modal-root" id="batchForkModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card modal-lg" role="dialog" aria-modal="true" aria-labelledby="batchForkTitle">
@@ -552,7 +577,7 @@
     </div>
   </div>
 
-  <!-- ================= 系统状态模态 ================= -->
+  <!-- 系统状态模态 -->
   <div class="modal-root" id="healthModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="healthTitle">
@@ -564,7 +589,7 @@
     </div>
   </div>
 
-  <!-- ================= 管理员账户模态 ================= -->
+  <!-- 管理员账户模态 -->
   <div class="modal-root" id="adminModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
@@ -622,7 +647,7 @@
     </div>
   </div>
 
-  <!-- ================= 代理设置模态 ================= -->
+  <!-- 代理设置模态 -->
   <div class="modal-root" id="proxyModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="proxyTitle">
@@ -662,6 +687,20 @@
             <span class="field-label">代理地址</span>
             <input id="pxCustomInput" type="text" placeholder="http://127.0.0.1:7897" spellcheck="false" autocomplete="off" disabled>
           </label>
+          <div class="px-auth-row">
+            <label class="field">
+              <span class="field-label">代理用户名<em class="faint">可选</em></span>
+              <input id="pxAuthUser" type="text" autocomplete="off" spellcheck="false" placeholder="需要认证时填写">
+            </label>
+            <label class="field">
+              <span class="field-label">代理密码<em class="faint">可选</em></span>
+              <input id="pxAuthPass" type="password" autocomplete="new-password" placeholder="留空表示不修改">
+            </label>
+          </div>
+          <p class="px-section-sub">
+            支持 HTTP / HTTPS / SOCKS5。地址可写 <code>socks5://127.0.0.1:1080</code>，
+            也可直接在地址里带凭据 <code>http://user:pass@host:port</code>。
+          </p>
           <div class="px-test-row">
             <button type="button" class="btn btn-ghost" id="pxTestBtn">测试连通性</button>
             <span class="faint">目标 · github.com</span>
@@ -691,7 +730,7 @@
     </div>
   </div>
 
-  <!-- ================= 退出登录确认模态 ================= -->
+  <!-- 退出登录确认模态 -->
   <div class="modal-root" id="logoutModal" hidden>
     <div class="modal-overlay" data-close></div>
     <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="logoutTitle">
@@ -711,7 +750,7 @@
     </div>
   </div>
 
-  <!-- ================= Toast ================= -->
+  <!-- Toast -->
   <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
 
   <script src="/js/app.js"></script>

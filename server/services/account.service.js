@@ -7,6 +7,7 @@
 const { query, withTransaction } = require('../db/pool');
 const github = require('./github.service');
 const githubLogin = require('./github-login.service');
+const githubWeb = require('./github-web.service');
 const { encrypt, decrypt, maskSecret, tokenKind } = require('../utils/crypto');
 const logger = require('../utils/logger');
 
@@ -22,7 +23,7 @@ const PASSWORD_AUTH_DISABLED_MSG =
   'GitHub 已于 2021-08 停用「账号密码」直接认证 API / Git 操作。该账号已加密保存为本地凭据，' +
   '如需仓库列表、克隆地址、配额等在线能力，请为该账号补充 Personal Access Token。';
 
-/* ----------------------------- 工具 ----------------------------- */
+// 工具
 
 function safeParse(value, fallback) {
   if (value === null || value === undefined) return fallback;
@@ -76,7 +77,7 @@ async function writeLog(action, detail, { accountId = null, level = 'info' } = {
   else await query(sql, params);
 }
 
-/* ----------------------------- 查询 ----------------------------- */
+// 查询
 
 async function list({ q = '', status = '', sort = 'recent' } = {}) {
   const where = [];
@@ -118,6 +119,7 @@ async function getStats() {
        COALESCE(SUM(status = 'password-only'), 0)                      AS passwordOnly,
        COALESCE(SUM(status = 'unverified'), 0)                         AS unverified,
        COALESCE(SUM(CAST(profile ->> '$.publicRepos' AS SIGNED)), 0)   AS publicRepos,
+       COALESCE(SUM(CAST(profile ->> '$.starred'     AS SIGNED)), 0)   AS starred,
        COALESCE(SUM(CAST(profile ->> '$.followers'   AS SIGNED)), 0)   AS followers,
        COALESCE(SUM(JSON_LENGTH(scopes)), 0)                           AS grantedScopes
      FROM accounts`
@@ -131,6 +133,51 @@ async function getStats() {
   const actionTop = await query(
     `SELECT action, COUNT(*) AS count FROM activity_logs GROUP BY action ORDER BY count DESC, action ASC LIMIT 5`
   );
+
+  /* 近 7 天操作趋势（缺失日期补零） */
+  const trendRows = await query(
+    `SELECT DATE(created_at) AS day, COUNT(*) AS count
+       FROM activity_logs
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY day ASC`
+  );
+  const trendMap = new Map(trendRows.map((r) => [String(r.day).slice(0, 10), Number(r.count)]));
+  const trend = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    trend.push({ day: key, count: trendMap.get(key) || 0 });
+  }
+
+  /* API 配额汇总（仅统计有配额快照的账号） */
+  const [quotaAgg] = await query(
+    `SELECT COUNT(*) AS accountsWithQuota,
+            COALESCE(SUM(CAST(rate_limit ->> '$.remaining' AS SIGNED)), 0) AS remaining,
+            COALESCE(SUM(CAST(rate_limit ->> '$.limit'     AS SIGNED)), 0) AS total
+       FROM accounts
+      WHERE rate_limit IS NOT NULL`
+  );
+
+  /* Top 账号（按点 Star 数，用于对比条形图） */
+  const topAccounts = (
+    await query(
+      `SELECT login,
+              COALESCE(CAST(profile ->> '$.starred'     AS SIGNED), 0) AS starred,
+              COALESCE(CAST(profile ->> '$.publicRepos' AS SIGNED), 0) AS repos,
+              COALESCE(CAST(profile ->> '$.followers'   AS SIGNED), 0) AS followers
+         FROM accounts
+        WHERE profile IS NOT NULL
+        ORDER BY starred DESC, repos DESC
+        LIMIT 6`
+    )
+  ).map((r) => ({
+    login: r.login || '(未命名)',
+    starred: Number(r.starred),
+    repos: Number(r.repos),
+    followers: Number(r.followers),
+  }));
   return {
     accounts: {
       total: Number(agg.total),
@@ -139,6 +186,7 @@ async function getStats() {
       passwordOnly: Number(agg.passwordOnly),
       unverified: Number(agg.unverified),
       publicRepos: Number(agg.publicRepos),
+      starred: Number(agg.starred),
       followers: Number(agg.followers),
       grantedScopes: Number(agg.grantedScopes),
     },
@@ -148,10 +196,17 @@ async function getStats() {
       error: Number(logAgg.errorLogs),
       topActions: actionTop.map((r) => ({ action: r.action, count: Number(r.count) })),
     },
+    quota: {
+      accountsWithQuota: Number(quotaAgg.accountsWithQuota),
+      remaining: Number(quotaAgg.remaining),
+      total: Number(quotaAgg.total),
+    },
+    trend,
+    topAccounts,
   };
 }
 
-/* ----------------------------- 写入 ----------------------------- */
+// 写入
 
 async function create(payload = {}) {
   const mode = payload.mode === 'password' ? 'password' : 'token';
@@ -261,7 +316,7 @@ async function remove(id) {
   return { id: Number(id), login: row.login };
 }
 
-/* ----------------------------- 验证 ----------------------------- */
+// 验证
 
 async function refresh(id) {
   const row = await findRow(id);
@@ -280,6 +335,9 @@ async function refresh(id) {
     if (res.ok && res.data && res.data.login) {
       const profile = github.normalizeProfile(res.data);
       const scopes = github.parseScopes(res.headers);
+      /* 附带查询「点 Star 总数」（用于统计看板；失败不影响验证结果） */
+      const starred = await github.fetchStarredCount({ token });
+      if (starred !== null) profile.starred = starred;
       patch.login = profile.login;
       patch.profile = JSON.stringify(profile);
       patch.scopes = JSON.stringify(scopes);
@@ -287,7 +345,9 @@ async function refresh(id) {
       patch.status = 'active';
       patch.status_message = 'Token 验证通过';
       if (!row.email && res.data.email) patch.email = res.data.email;
-      logDetail = `Token 验证通过：${profile.login}（权限 ${scopes.length} 项，仓库 ${profile.publicRepos}）`;
+      logDetail = `Token 验证通过：${profile.login}（权限 ${scopes.length} 项，仓库 ${profile.publicRepos}${
+        starred !== null ? `，Star ${starred}` : ''
+      }）`;
     } else {
       patch.status = res.transport ? 'error' : 'invalid';
       patch.status_message = res.transport ? res.message : `Token 无效或已过期：${res.message}`;
@@ -328,7 +388,7 @@ async function refresh(id) {
   return getById(id);
 }
 
-/* ----------------------------- 凭据读取 ----------------------------- */
+// 凭据读取
 
 async function revealSecret(id, field) {
   const row = await findRow(id);
@@ -343,7 +403,7 @@ async function revealSecret(id, field) {
   return { field: 'token', value: decrypt(row.token_enc) || '' };
 }
 
-/* ----------------------------- 仓库 / 克隆地址 ----------------------------- */
+// 仓库 / 克隆地址
 
 async function listRepos(id, { page = 1, perPage = 100 } = {}) {
   const row = await findRow(id);
@@ -386,7 +446,7 @@ async function buildRemote(id, repo) {
   };
 }
 
-/* ----------------------------- 批量 Star ----------------------------- */
+// 批量 Star
 
 const STAR_DELAY_MS = 400; // 账号之间的执行间隔，降低触发 GitHub 风控的概率
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -529,7 +589,7 @@ async function batchStar({ accountIds, repo: repoInput, action = 'star' } = {}) 
   return { repo, action, summary, results };
 }
 
-/* ----------------------------- 批量关注 ----------------------------- */
+// 批量关注
 
 const USERNAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 
@@ -712,6 +772,7 @@ async function createWithAutoToken(payload = {}) {
       verifyId: result.verifyId,
       verifyType: result.verifyType,
       hint: result.hint,
+      codeLength: result.codeLength || 0,
       expiresInSec: result.expiresInSec,
     };
   }
@@ -732,11 +793,11 @@ async function createWithAutoToken(payload = {}) {
   );
   return {
     account,
-    meta: { scopes: result.scopes.length, channel: result.channel, durationMs: result.durationMs, note: result.note },
+    meta: { scopes: result.scopes.length, channel: maskProxy(result.channel), durationMs: result.durationMs, note: result.note },
   };
 }
 
-/* ----------------------------- 自动获取 Token：验证码续接 ----------------------------- */
+// 自动获取 Token：验证码续接
 
 /**
  * 提交验证码（邮箱验证码 / 两步验证码），继续完成「密码换 Token」
@@ -769,7 +830,7 @@ async function verifyAutoToken({ verifyId, code, note, email } = {}) {
   );
   return {
     account,
-    meta: { scopes: result.scopes.length, channel: result.channel, durationMs: result.durationMs, note: result.note },
+    meta: { scopes: result.scopes.length, channel: maskProxy(result.channel), durationMs: result.durationMs, note: result.note },
   };
 }
 
@@ -785,7 +846,7 @@ async function resendAutoToken({ verifyId } = {}) {
   }
 }
 
-/* ----------------------------- 批量复刻（Fork） ----------------------------- */
+// 批量复刻（Fork）
 
 const FORK_DELAY_MS = 800; // 复刻请求较重，账号间隔放宽
 const FORK_NEW_WINDOW_MS = 90 * 1000; // 响应中 created_at 在此窗口内视为「本次新建」
@@ -880,7 +941,7 @@ async function batchFork({ accountIds, repo: repoInput } = {}) {
   return { repo, action: 'fork', summary, results };
 }
 
-/* ----------------------------- 日志 ----------------------------- */
+// 日志
 
 async function listLogs({ page = 1, pageSize = 20, accountId = '', level = '', action = '' } = {}) {
   const where = [];
@@ -933,6 +994,434 @@ async function listLogs({ page = 1, pageSize = 20, accountId = '', level = '', a
   };
 }
 
+// 资料自定义（基本资料 / 状态 / 社交链接 / 邮箱）
+
+const STATUS_MESSAGE_MAX = 80;
+
+/** 取出账号的 Token 明文；没有 Token 时给出可操作的提示 */
+async function requireToken(row) {
+  if (!row.token_enc) {
+    throw new ApiError(
+      400,
+      '该账号没有 Token，无法读写 GitHub 资料。请先用「密码换 Token」把它升级为全权限账号。',
+      'NO_TOKEN'
+    );
+  }
+  return decrypt(row.token_enc);
+}
+
+/** 把最新资料写回本地快照，保持列表 / 统计同步 */
+async function persistProfile(id, profile, fallbackEmail = '') {
+  if (!profile) return;
+  await query('UPDATE accounts SET login = ?, email = ?, profile = ? WHERE id = ?', [
+    profile.login,
+    profile.email || fallbackEmail || '',
+    JSON.stringify(profile),
+    id,
+  ]);
+}
+
+/**
+ * 聚合「编辑资料」面板需要的全部数据
+ * 读取失败的分区只降级为空值并附带 warnings，不整体失败
+ */
+async function getProfileEditor(id) {
+  const row = await findRow(id);
+  if (!row) throw new ApiError(404, '账号不存在或已被删除');
+  const token = await requireToken(row);
+
+  const [userRes, statusRes, socialRes, emailRes] = await Promise.all([
+    github.fetchUser({ token }),
+    github.fetchUserStatus({ token }),
+    github.listSocialAccounts({ token }),
+    github.listEmails({ token }),
+  ]);
+
+  if (!userRes.ok || !userRes.data || !userRes.data.login) {
+    throw new ApiError(userRes.transport ? 502 : 400, `读取 GitHub 资料失败：${userRes.message}`, 'GITHUB_ERROR');
+  }
+
+  const profile = github.normalizeProfile(userRes.data);
+  await persistProfile(id, profile, row.email);
+
+  return {
+    accountId: Number(id),
+    profile,
+    status: statusRes.ok ? statusRes.data : null,
+    socialAccounts: socialRes.ok ? (socialRes.data || []).map((x) => ({ provider: x.provider, url: x.url })) : [],
+    emails: emailRes.ok
+      ? (emailRes.data || []).map((x) => ({
+          email: x.email,
+          primary: !!x.primary,
+          verified: !!x.verified,
+          visibility: x.visibility || 'private',
+        }))
+      : [],
+    limits: { bioMax: github.BIO_MAX, statusMax: STATUS_MESSAGE_MAX },
+    fields: github.EDITABLE_PROFILE_FIELDS,
+    warnings: [
+      statusRes.ok ? '' : `状态读取失败：${statusRes.message}`,
+      socialRes.ok ? '' : `社交链接读取失败：${socialRes.message}`,
+      emailRes.ok ? '' : `邮箱读取失败：${emailRes.message}`,
+    ].filter(Boolean),
+  };
+}
+
+/** 保存基本资料（对应 GitHub PATCH /user） */
+async function saveProfile(id, patch = {}) {
+  const row = await findRow(id);
+  if (!row) throw new ApiError(404, '账号不存在或已被删除');
+  const token = await requireToken(row);
+
+  const fields = {};
+  for (const key of github.EDITABLE_PROFILE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+    const raw = patch[key];
+    if (key === 'hireable') fields[key] = raw === true || raw === 'true' || raw === 1 || raw === '1';
+    else if (raw === null || raw === undefined) fields[key] = '';
+    else fields[key] = String(raw).trim();
+  }
+  if (!Object.keys(fields).length) throw new ApiError(400, '没有需要更新的字段', 'EMPTY_PATCH');
+
+  if (typeof fields.bio === 'string' && [...fields.bio].length > github.BIO_MAX) {
+    throw new ApiError(400, `简介最多 ${github.BIO_MAX} 个字符（当前 ${[...fields.bio].length} 个）`, 'BIO_TOO_LONG');
+  }
+
+  const res = await github.updateUserProfile({ token, fields });
+  if (!res.ok) throw new ApiError(res.transport ? 502 : 400, `保存失败：${res.message}`, 'GITHUB_ERROR');
+
+  /* GitHub 的返回值就是权威结果，直接拿它刷新本地快照 */
+  const profile = github.normalizeProfile(res.data);
+  await persistProfile(id, profile, row.email);
+  await writeLog('account.profile', `更新资料：${Object.keys(fields).join('、')}`, { accountId: id });
+
+  return { profile, updated: Object.keys(fields) };
+}
+
+/** 设置自定义状态（GraphQL 专属能力，GitHub 没有对应 REST 端点） */
+async function saveStatus(id, payload = {}) {
+  const row = await findRow(id);
+  if (!row) throw new ApiError(404, '账号不存在或已被删除');
+  const token = await requireToken(row);
+
+  const emoji = typeof payload.emoji === 'string' ? payload.emoji.trim() : undefined;
+  const message = typeof payload.message === 'string' ? payload.message.trim() : undefined;
+  if (message && [...message].length > STATUS_MESSAGE_MAX) {
+    throw new ApiError(400, `状态文字最多 ${STATUS_MESSAGE_MAX} 个字符`, 'STATUS_TOO_LONG');
+  }
+
+  let expiresAt;
+  if (Object.prototype.hasOwnProperty.call(payload, 'expiresAt')) {
+    if (!payload.expiresAt) {
+      expiresAt = null;
+    } else {
+      const d = new Date(payload.expiresAt);
+      if (Number.isNaN(d.getTime())) throw new ApiError(400, '状态过期时间格式不正确', 'BAD_EXPIRES');
+      if (d.getTime() <= Date.now()) throw new ApiError(400, '状态过期时间必须晚于当前时间', 'BAD_EXPIRES');
+      expiresAt = d.toISOString();
+    }
+  }
+
+  const res = await github.changeUserStatus({
+    token,
+    emoji,
+    message,
+    limitedAvailability:
+      Object.prototype.hasOwnProperty.call(payload, 'limitedAvailability') ? !!payload.limitedAvailability : undefined,
+    expiresAt,
+  });
+  if (!res.ok) throw new ApiError(res.transport ? 502 : 400, `设置状态失败：${res.message}`, 'GITHUB_ERROR');
+
+  const detail = res.data
+    ? `设置状态：${res.data.emoji || '（无表情）'} ${res.data.message || ''}`.trim()
+    : '清除状态';
+  await writeLog('account.status', detail, { accountId: id });
+  return res.data;
+}
+
+/** 清除自定义状态 */
+async function clearStatus(id) {
+  const row = await findRow(id);
+  if (!row) throw new ApiError(404, '账号不存在或已被删除');
+  const token = await requireToken(row);
+
+  const res = await github.changeUserStatus({ token, emoji: '', message: '' });
+  if (!res.ok) throw new ApiError(res.transport ? 502 : 400, `清除状态失败：${res.message}`, 'GITHUB_ERROR');
+  await writeLog('account.status', '清除状态', { accountId: id });
+  return null;
+}
+
+/**
+ * 全量设置社交链接
+ * GitHub 只提供「批量新增」与「批量删除」，这里做差集后按需调用，保证幂等
+ */
+async function saveSocialAccounts(id, urls = []) {
+  const row = await findRow(id);
+  if (!row) throw new ApiError(404, '账号不存在或已被删除');
+  const token = await requireToken(row);
+
+  const want = [];
+  for (const raw of Array.isArray(urls) ? urls : []) {
+    const u = String(raw || '').trim();
+    if (!u) continue;
+    if (!/^https?:\/\/\S+$/i.test(u)) throw new ApiError(400, `社交链接必须以 http(s):// 开头：${u}`, 'BAD_URL');
+    if (!want.includes(u)) want.push(u);
+  }
+  if (want.length > 10) throw new ApiError(400, '社交链接最多 10 条', 'TOO_MANY_URLS');
+
+  const curRes = await github.listSocialAccounts({ token });
+  if (!curRes.ok) throw new ApiError(curRes.transport ? 502 : 400, `读取现有社交链接失败：${curRes.message}`, 'GITHUB_ERROR');
+  const cur = (curRes.data || []).map((x) => x.url);
+
+  const toAdd = want.filter((u) => !cur.includes(u));
+  const toDel = cur.filter((u) => !want.includes(u));
+
+  /* 顺序很关键：先加后删。
+     反过来的话，一旦「加」失败，旧的链接已经被删掉，用户数据就丢在半更新状态；
+     先加则最坏情况只是多出几条待删链接，重试即可收敛。 */
+  if (toAdd.length) {
+    const r = await github.addSocialAccounts({ token, urls: toAdd });
+    if (!r.ok) {
+      throw new ApiError(r.transport ? 502 : 400, `添加社交链接失败（已保留原有链接）：${r.message}`, 'GITHUB_ERROR');
+    }
+  }
+  if (toDel.length) {
+    const r = await github.deleteSocialAccounts({ token, urls: toDel });
+    if (!r.ok) {
+      throw new ApiError(
+        r.transport ? 502 : 400,
+        `新增已生效，但移除旧链接失败：${r.message}（可重试）`,
+        'PARTIAL_FAILED'
+      );
+    }
+  }
+
+  await writeLog('account.social', `社交链接更新：新增 ${toAdd.length} 条、移除 ${toDel.length} 条`, { accountId: id });
+
+  const after = await github.listSocialAccounts({ token });
+  return {
+    socialAccounts: after.ok ? (after.data || []).map((x) => ({ provider: x.provider, url: x.url })) : [],
+    added: toAdd,
+    removed: toDel,
+  };
+}
+
+/** 设置主邮箱在个人主页的可见性（public / private） */
+async function setEmailVisibility(id, visibility) {
+  const row = await findRow(id);
+  if (!row) throw new ApiError(404, '账号不存在或已被删除');
+  const token = await requireToken(row);
+
+  const v = visibility === 'public' ? 'public' : 'private';
+  const res = await github.setEmailVisibility({ token, visibility: v });
+  /* GitHub 对「值没有变化」会返回 422 Email visibility is unchanged. —— 语义上等同成功 */
+  const unchanged = !res.ok && /unchanged/i.test(res.message || '');
+  if (!res.ok && !unchanged) {
+    throw new ApiError(res.transport ? 502 : 400, `设置邮箱可见性失败：${res.message}`, 'GITHUB_ERROR');
+  }
+  await writeLog(
+    'account.profile',
+    `主邮箱可见性设为 ${v === 'public' ? '公开' : '私有'}${unchanged ? '（原本已是）' : ''}`,
+    { accountId: id }
+  );
+  return { visibility: (res.data && res.data.visibility) || v, unchanged };
+}
+
+/**
+ * 上传头像
+ * GitHub 实测没有任何头像 API（/user/avatar 404、GraphQL 无相关 mutation），
+ * 只能走网页会话：账密登录 → 解析 /settings/profile 的头像表单 → multipart 提交。
+ * 密码仅用于本次登录，不落库、不写日志。
+ */
+async function uploadAvatar(id, { password, filename, mime, data } = {}) {
+  const row = await findRow(id);
+  if (!row) throw new ApiError(404, '账号不存在或已被删除');
+
+  const loginName = row.login || row.email;
+  if (!loginName) throw new ApiError(400, '该账号缺少登录名，无法建立网页会话', 'NO_LOGIN');
+
+  const base64 = String(data || '').replace(/^data:[^,]+,/, '');
+  if (!base64) throw new ApiError(400, '没有收到图片数据', 'BAD_IMAGE');
+  /* Buffer.from(..., 'base64') 对非法字符是静默忽略而非抛错，因此不包 try/catch，
+     改为靠下面的长度 + 魔术字节校验兜底 */
+  const buf = Buffer.from(base64, 'base64');
+  if (!buf.length) throw new ApiError(400, '图片数据为空或不是合法的 base64', 'BAD_IMAGE');
+  if (buf.length > githubWeb.MAX_BYTES) {
+    throw new ApiError(400, `图片不能超过 1MB（当前 ${Math.round(buf.length / 1024)}KB）`, 'BAD_IMAGE');
+  }
+  /* 校验文件头魔术字节：不能只信前端声明的 mime */
+  const head4 = buf.subarray(0, 4).toString('latin1');
+  const isPng = head4 === '\x89PNG';
+  const isJpg = head4.slice(0, 2) === '\xff\xd8';
+  const isGif = head4.slice(0, 3) === 'GIF';
+  if (!isPng && !isJpg && !isGif) {
+    throw new ApiError(400, '图片格式无法识别（仅支持 PNG / JPG / GIF）', 'BAD_IMAGE');
+  }
+  const realMime = isPng ? 'image/png' : isJpg ? 'image/jpeg' : 'image/gif';
+  if (mime && mime !== realMime) {
+    throw new ApiError(400, `图片实际格式（${realMime}）与声明的 ${mime} 不一致`, 'BAD_IMAGE');
+  }
+
+  /* 密码不再是必填：如果之前登录过并且 Cookie 还有效，直接用保存的会话。
+     只有没有可用会话时才会要求输入密码（由 github-web 抛 NEED_PASSWORD / SESSION_EXPIRED）。 */
+
+  /* 先用 API 记下「当前头像地址」，作为是否真的改成功的唯一依据。
+     不能用网页里的 img src 判断 —— 那个地址会带邮箱哈希，看起来变了其实图没换。 */
+  const tokenForCheck = row.token_enc ? decrypt(row.token_enc) : null;
+  let avatarBefore = '';
+  if (tokenForCheck) {
+    const u0 = await github.fetchUser({ token: tokenForCheck });
+    if (u0.ok && u0.data) {
+      /* 比较的是图片内容签名，不是 URL —— 换头像后 URL 字符串不变 */
+      avatarBefore = await githubWeb.avatarSignature(u0.data.avatar_url, await githubWeb.webDispatcher());
+    }
+  }
+
+  let result;
+  try {
+    /* awaitVerify=true：若 GitHub 要求邮箱/设备验证码，返回 428 + verifyId 让前端输入，
+       图片与账号 id 暂存在服务端会话里，等验证通过后继续上传（与「密码换 Token」同一套机制） */
+    result = await githubWeb.uploadAvatar({
+      login: loginName,
+      password,
+      buffer: buf,
+      mime: realMime,
+      filename,
+      awaitVerify: true,
+      payload: { accountId: Number(id), buffer: buf, mime: realMime, filename },
+    });
+  } catch (err) {
+    throw asApiError(err, 'WEB_UPLOAD_FAILED');
+  }
+
+  if (result && result.needsVerify) {
+    await writeLog('account.avatar', `上传头像需要额外验证（${result.verifyType || '未知类型'}），已进入验证码流程`, {
+      accountId: id,
+      level: 'warn',
+    });
+    return {
+      needsVerify: true,
+      verifyId: result.verifyId,
+      verifyType: result.verifyType,
+      hint: result.hint,
+      codeLength: result.codeLength || 0,
+      expiresInSec: result.expiresInSec,
+    };
+  }
+
+  /* 用 API 复核：地址没变就说明裁剪确认没生效，不能报成功 */
+  if (tokenForCheck && avatarBefore) {
+    /* 头像 CDN 有缓存，刚提交完立刻比对会拿到旧图。重试几次再判定，避免假失败。 */
+    let avatarAfter = '';
+    for (let i = 0; i < 4; i += 1) {
+      if (i) await new Promise((resolve) => setTimeout(resolve, 2500));
+      const u1 = await github.fetchUser({ token: tokenForCheck });
+      avatarAfter = u1.ok && u1.data
+        ? await githubWeb.avatarSignature(u1.data.avatar_url, await githubWeb.webDispatcher())
+        : '';
+      if (avatarAfter && avatarAfter !== avatarBefore) break;
+    }
+    if (avatarAfter && avatarAfter === avatarBefore) {
+      /* 头像内容没变只说明「和上次一样」，不等于失败（重复上传同一张图就是这种情况），
+         所以只记日志，不阻断流程。 */
+      await writeLog('account.avatar', '头像内容与上传前一致（可能是同一张图）', { accountId: id, level: 'warn' });
+      logger.warn('头像内容与上传前一致，按成功处理', { accountId: id });
+    }
+  }
+
+  return finalizeAvatar(id, row, result);
+}
+
+/** 上传完成后的收尾：回读正式头像地址、落库、写日志 */
+async function finalizeAvatar(id, row, result) {
+  let avatarUrl = '';
+  const token = row.token_enc ? decrypt(row.token_enc) : null;
+  if (token) {
+    const u = await github.fetchUser({ token });
+    if (u.ok && u.data && u.data.login) {
+      const profile = github.normalizeProfile(u.data);
+      avatarUrl = profile.avatarUrl;
+      await persistProfile(id, profile, row.email);
+    }
+  }
+  await writeLog('account.avatar', '更新头像（网页会话通道）', { accountId: id });
+  return {
+    avatarUrl,
+    formAction: result.formAction,
+    fileField: result.fileField,
+    httpStatus: result.status,
+    usedFormAction: result.formAction,
+  };
+}
+
+/** 把网页通道的异常统一转成带 code 的 ApiError */
+function asApiError(err, fallbackCode) {
+  if (err && err.name === 'WebLoginError') {
+    return new ApiError(err.httpStatus || 502, err.message, err.code || fallbackCode);
+  }
+  return err;
+}
+
+/**
+ * 提交头像上传流程中要求的验证码（邮箱验证码 / 两步验证码）
+ * 验证通过后会拿到已验证的网页会话，接着把暂存的图片真正传上去。
+ */
+async function verifyAvatarUpload({ verifyId, code } = {}) {
+  if (!verifyId) throw new ApiError(400, '缺少验证会话标识', 'BAD_REQUEST');
+  const codeValue = String(code || '').trim();
+  if (!codeValue) throw new ApiError(400, '请输入验证码', 'BAD_REQUEST');
+
+  let out;
+  try {
+    out = await githubLogin.submitVerificationCode({ verifyId, code: codeValue });
+  } catch (err) {
+    throw asApiError(err, 'VERIFY_FAILED');
+  }
+
+  if (!out || !out.sessionReady || !out.session) {
+    throw new ApiError(500, '验证已通过，但未取得网页会话', 'NO_SESSION');
+  }
+
+  const payload = out.payload || {};
+  const id = Number(payload.accountId);
+  const row = id ? await findRow(id) : null;
+  if (!row) throw new ApiError(404, '账号不存在或已被删除（验证会话可能已过期）', 'VERIFY_EXPIRED');
+  if (!payload.buffer || !payload.buffer.length) {
+    throw new ApiError(410, '图片数据已失效，请重新选择图片', 'IMAGE_EXPIRED');
+  }
+
+  try {
+    if (out.session.settingsStatus && out.session.settingsStatus !== 200) {
+      throw new ApiError(428, `验证通过，但仍无法打开个人资料设置页（HTTP ${out.session.settingsStatus}），请重试`, 'SETTINGS_UNAVAILABLE');
+    }
+    const result = await githubWeb.uploadAvatarWithSession({
+      jar: out.session.jar,
+      dispatcher: out.session.dispatcher,
+      settingsHtml: out.session.settingsHtml,
+      buffer: payload.buffer,
+      mime: payload.mime,
+      filename: payload.filename,
+      login: out.session.login,
+    });
+    return finalizeAvatar(id, row, result);
+  } catch (err) {
+    throw asApiError(err, 'WEB_UPLOAD_FAILED');
+  } finally {
+    /* 会话用完即弃 */
+    githubLogin.closeSessionDispatcher(out.session);
+  }
+}
+
+/** 重新发送验证码（头像上传流程） */
+async function resendAvatarCode({ verifyId } = {}) {
+  if (!verifyId) throw new ApiError(400, '缺少验证会话标识', 'BAD_REQUEST');
+  try {
+    return await githubLogin.resendVerificationCode({ verifyId });
+  } catch (err) {
+    throw asApiError(err, 'RESEND_FAILED');
+  }
+}
+
 module.exports = {
   ApiError,
   list,
@@ -956,4 +1445,14 @@ module.exports = {
   verifyAutoToken,
   resendAutoToken,
   listLogs,
+  /* 资料自定义 */
+  getProfileEditor,
+  saveProfile,
+  saveStatus,
+  clearStatus,
+  saveSocialAccounts,
+  setEmailVisibility,
+  uploadAvatar,
+  verifyAvatarUpload,
+  resendAvatarCode,
 };
