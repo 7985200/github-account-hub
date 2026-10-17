@@ -7,7 +7,7 @@
   <img alt="Docker" src="https://img.shields.io/badge/Docker-%E6%94%AF%E6%8C%81%E4%B8%80%E9%94%AE%E9%83%A8%E7%BD%B2-0a0a0b?logo=docker&labelColor=0a0a0b">
 </p>
 
-本地优先的 GitHub 多账号集中管理面板。**Node.js + Express + MySQL** 全栈，前端纯手写（零框架、零构建、零 CDN），黑白极简双主题。
+本地优先的 GitHub 多账号集中管理面板。**Node.js + Express + MySQL** 全栈（零框架、零构建、零 CDN），黑白极简双主题。
 
 适合需要集中管理多个 GitHub 账号（小号矩阵）的场景：统一查看资料与配额、批量给仓库点 Star、批量复刻仓库、批量关注用户、一键从账号密码自动换取全权限 Token。
 
