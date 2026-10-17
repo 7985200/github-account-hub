@@ -33,6 +33,144 @@ err()   { printf "%s\n" "${C_RED}  ✗ ${C_RESET}$*"; }
 step()  { printf "\n%s\n" "${C_BOLD}${C_MAGENTA}━━ $* ━━${C_RESET}"; }
 hr()    { printf "%s\n" "${C_DIM}────────────────────────────────────────────────${C_RESET}"; }
 
+# ---------------- 更新前备份 ----------------
+# 备份内容：data/ 目录（含加密密钥 secret.key、登录态、调试快照）+ 数据库
+# 失败不阻断更新，只提示；非交互模式直接跳过，避免卡住
+backup_before_update() {
+  local dir="$1"
+  local stamp name root ans tmp target
+  local dumped=0
+
+  stamp="$(date '+%Y年%m月%d日')"
+  name="${stamp}备份.zip"
+
+  if [ -n "$NONINT" ]; then
+    warn "非交互模式：跳过交互备份，请在更新前自行备份 $dir/data 与数据库"
+    return 0
+  fi
+
+  printf "\n%s\n" "${C_BOLD}更新前是否备份数据？${C_RESET}"
+  printf "%s\n" "  ${C_DIM}备份内容：data/ 目录（含加密密钥、登录态）+ 数据库${C_RESET}"
+  ans=""
+  read -rp "是否备份 [Y/n]: " ans || true
+  case "$ans" in
+    n|N|no|NO) info "已跳过备份"; return 0 ;;
+  esac
+
+  read -rp "备份保存目录 [默认 /github-vote]: " root || true
+  root="${root:-/github-vote}"
+  case "$root" in
+    "~")   root="$HOME" ;;
+    "~/"*) root="$HOME/${root#\~/}" ;;
+  esac
+  # 去掉末尾斜杠，避免拼出 //
+  while [ "${root%/}" != "$root" ] && [ "$root" != "/" ]; do root="${root%/}"; done
+  # 绝对路径判断：POSIX 以 / 开头；同时兼容 Windows 盘符（C:// 或 C:/）
+  case "$root" in
+    /*|?:[\\/]*) : ;;
+    *)  root="$PWD/$root" ;;
+  esac
+
+  # 默认 /github-vote 需要 root 权限，失败则回落到用户家目录
+  if ! mkdir -p "$root" 2>/dev/null || [ ! -w "$root" ]; then
+    if [ "$root" = "/github-vote" ] && mkdir -p "$HOME/github-vote" 2>/dev/null && [ -w "$HOME/github-vote" ]; then
+      root="$HOME/github-vote"
+      warn "无权创建 /github-vote（需 root），已改用 $root"
+    else
+      err "无法创建备份目录：$root"
+      warn "已跳过备份，继续更新"
+      return 1
+    fi
+  fi
+
+  tmp="$(mktemp -d 2>/dev/null || echo "/tmp/ghhub-backup-$$")"
+  mkdir -p "$tmp" 2>/dev/null || { warn "临时目录创建失败，已跳过备份"; return 1; }
+
+  # 1) data 目录（加密密钥与登录态都在这里，最关键）
+  if [ -d "$dir/data" ]; then
+    if cp -a "$dir/data" "$tmp/data" 2>/dev/null; then
+      ok "已收集 data/ 目录"
+    else
+      warn "data/ 目录复制失败"
+    fi
+  else
+    warn "未找到 $dir/data 目录，跳过"
+  fi
+
+  # 2) 数据库：优先 mysqldump（Docker），其次复制数据目录（宿主机）
+  if command -v docker >/dev/null 2>&1 && [ -f "$dir/docker-compose.yml" ]; then
+    local cid rootpw dbname
+    cid="$(cd "$dir" && { docker compose ps -q db 2>/dev/null || true; } | head -1 || true)"
+    if [ -n "$cid" ]; then
+      rootpw="$( { grep -E '^MYSQL_ROOT_PASSWORD=' "$dir/.env" 2>/dev/null || true; } | cut -d= -f2- | tr -d '"' || true)"
+      dbname="$( { grep -E '^MYSQL_DATABASE=' "$dir/.env" 2>/dev/null || true; } | cut -d= -f2- | tr -d '"' || true)"
+      dbname="${dbname:-github_hub}"
+      if [ -n "$rootpw" ] && docker exec "$cid" mysqldump -uroot -p"$rootpw" --single-transaction "$dbname" >"$tmp/database.sql" 2>/dev/null; then
+        dumped=1
+        ok "已导出数据库（Docker）"
+      fi
+    fi
+  fi
+
+  if [ "$dumped" -eq 0 ] && [ -d "$dir/runtime/mysql/data" ]; then
+    if cp -a "$dir/runtime/mysql/data" "$tmp/mysql-data" 2>/dev/null; then
+      dumped=1
+      ok "已复制 MySQL 数据目录"
+    else
+      warn "MySQL 数据目录复制失败"
+    fi
+  fi
+
+  if [ "$dumped" -eq 0 ]; then
+    warn "未能导出数据库，本次备份只包含 data/ 目录"
+  fi
+
+  # 3) 元信息，便于日后确认对应哪个版本
+  {
+    echo "备份时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "项目目录: $dir"
+    echo "代码版本: $(cd "$dir" 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  } >"$tmp/BACKUP-INFO.txt" 2>/dev/null || true
+
+  # 4) 打包为 zip；没有 zip 命令时退化为 tar.gz
+  target="$root/$name"
+  # 同一天多次更新时加序号，避免静默覆盖上一次的备份
+  if [ -e "$target" ]; then
+    local n=2
+    while [ -e "$root/${stamp}备份-${n}.zip" ]; do n=$((n + 1)); done
+    target="$root/${stamp}备份-${n}.zip"
+  fi
+  local packed=0
+  if command -v zip >/dev/null 2>&1; then
+    if (cd "$tmp" && zip -qr "$target" .) 2>/dev/null; then
+      packed=1
+      ok "备份已保存：$target"
+    fi
+  fi
+  # 没有 zip 命令时用 python3 生成标准 zip（大多数 Linux 自带）
+  if [ "$packed" -eq 0 ] && command -v python3 >/dev/null 2>&1; then
+    if python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2])" "${target%.zip}" "$tmp" >/dev/null 2>&1; then
+      packed=1
+      ok "备份已保存：$target（python3 打包）"
+    fi
+  fi
+  # 两者都没有才退化为 tar.gz
+  if [ "$packed" -eq 0 ]; then
+    target="$root/${stamp}备份.tar.gz"
+    if tar -czf "$target" -C "$tmp" . 2>/dev/null; then
+      warn "系统没有 zip 与 python3，已改用 tar.gz：$target"
+    else
+      warn "打包失败：$target"
+    fi
+  fi
+
+  rm -rf "$tmp" 2>/dev/null || true
+  if [ -f "$target" ]; then
+    ok "备份大小：$( { du -h "$target" 2>/dev/null || true; } | cut -f1 || true)"
+  fi
+  return 0
+}
+
 banner() {
   printf "%s" "${C_CYAN}${C_BOLD}"
   cat <<'ART'
@@ -117,6 +255,13 @@ if [ -z "$PROJECT_DIR" ]; then
         ok "使用现有源码重新部署（数据保留）"
         ;;
       2)
+        # 更新前先询问是否备份（备份的是更新前的状态，失败不阻断更新）
+        UPD_DIR="$TARGET_DIR"
+        case "$UPD_DIR" in
+          /*) : ;;
+          *)  UPD_DIR="$PWD/$UPD_DIR" ;;
+        esac
+        backup_before_update "$UPD_DIR"
         info "拉取仓库最新代码…"
         if git -C "$TARGET_DIR" pull --ff-only 2>&1 | tail -3; then
           ok "代码已更新到最新"
