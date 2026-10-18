@@ -184,10 +184,11 @@ backup_before_update() {
   fi
 
   # 4) 宿主机部署：本机有 mysqldump 就优先用它（一致性远好于直接复制正在写入的数据目录）
+  #    注意：.env 的 MYSQL_ROOT_PASSWORD 只属于 Docker 容器，与宿主机真实 root 密码无关，
+  #    不能拿它覆盖应用账号凭据 —— 应用账号对本库有全部权限，足以导出。
   if [ "$dumped" -eq 0 ] && command -v mysqldump >/dev/null 2>&1; then
     m_user="${dbuser:-root}"
     m_pass="$dbpass"
-    [ -n "$rootpw" ] && { m_user="root"; m_pass="$rootpw"; }
     if [ -n "$m_pass" ]; then
       if MYSQL_PWD="$m_pass" mysqldump \
            -h "${dbhost:-127.0.0.1}" -P "${dbport:-3306}" -u "$m_user" \
@@ -400,6 +401,9 @@ if [ -z "$PROJECT_DIR" ]; then
         N=2
         while [ -d "${BASE_DIR}-${N}" ]; do N=$((N + 1)); done
         TARGET_DIR="${BASE_DIR}-${N}"
+        # 宿主机模式多实例共用一个 MySQL：必须用独立库名+用户，否则互相挤掉线
+        INSTALL_DB_NAME="github_hub_${N}"
+        INSTALL_DB_USER="ghhub_${N}"
         info "克隆新实例到 $TARGET_DIR …"
         if ! git clone --depth 1 "$REPO_URL.git" "$TARGET_DIR"; then
           err "克隆失败。若服务器无法访问 github.com，请手动上传源码后运行 bash install.sh"
@@ -480,12 +484,44 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; th
   exit 1
 fi
 
+# 数据库名/用户：优先 INSTALL_DB_NAME / INSTALL_DB_USER（多实例隔离用），
+# 其次沿用 .env 已有值，最后用默认值。宿主机多实例必须各用各的库+用户，
+# 否则第二个实例改密码会把第一个实例挤下线。
+EXIST_DB_NAME=""
+EXIST_DB_USER=""
+if [ -f .env ]; then
+  EXIST_DB_NAME="$(grep -E '^DB_NAME=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r')"
+  EXIST_DB_USER="$(grep -E '^DB_USER=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r')"
+fi
+if [ -n "${INSTALL_DB_NAME:-}" ]; then
+  DB_NAME="$INSTALL_DB_NAME"
+else
+  DB_NAME="${EXIST_DB_NAME:-github_hub}"
+fi
+if [ -n "${INSTALL_DB_USER:-}" ]; then
+  DB_USER="$INSTALL_DB_USER"
+elif [ -n "${INSTALL_DB_NAME:-}" ]; then
+  # 只给了库名时，用户默认跟库名走，避免继续共用 ghhub 把旧实例挤下线
+  DB_USER="$INSTALL_DB_NAME"
+else
+  DB_USER="${EXIST_DB_USER:-ghhub}"
+fi
+
 # 随机生成数据库密码（除非 .env 里已有）
 if [ -f .env ] && grep -q '^DB_PASSWORD=' .env && ! grep -q '^DB_PASSWORD=$' .env; then
   DB_PASSWORD="$(grep '^DB_PASSWORD=' .env | head -1 | cut -d= -f2-)"
   ok "沿用 .env 中已有的数据库密码"
 else
   DB_PASSWORD="Ghhub-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-10)-$(date +%s | tail -c 5)"
+fi
+
+# Docker 数据卷只在首次初始化时读取 MYSQL_ROOT_PASSWORD；重跑必须沿用旧值，
+# 否则 .env 里的 root 密码与卷内实际密码不一致，备份/恢复都会认证失败
+if [ -f .env ] && grep -q '^MYSQL_ROOT_PASSWORD=.' .env; then
+  MYSQL_ROOT_PASSWORD="$(grep '^MYSQL_ROOT_PASSWORD=' .env | head -1 | cut -d= -f2- | tr -d '\r')"
+  ok "沿用 .env 中已有的 MySQL root 密码"
+else
+  MYSQL_ROOT_PASSWORD="Root-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-10)"
 fi
 
 step "配置确认"
@@ -522,11 +558,11 @@ PORT=$PORT
 # ---------- MySQL ----------
 DB_HOST=$([ "$MODE" = 1 ] && echo mysql || echo 127.0.0.1)
 DB_PORT=3306
-DB_USER=ghhub
+DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
-DB_NAME=github_hub
+DB_NAME=$DB_NAME
 DB_POOL_SIZE=10
-MYSQL_ROOT_PASSWORD=Root-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-10)
+MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
 
 # ---------- 存储 / 日志 ----------
 DATA_DIR=data
@@ -549,6 +585,7 @@ COOKIE_SECURE=auto
 # ---------- Docker 端口绑定 ----------
 BIND_IP=$BIND_IP
 ENV
+chmod 600 .env 2>/dev/null || true
 ok ".env 已生成（含随机数据库密码）"
 
 # ================= Docker 模式 =================
@@ -603,9 +640,9 @@ else
     err "未检测到 node。请安装 Node.js >= 18：https://nodejs.org/"
     exit 1
   fi
-  NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-  if [ "$NODE_MAJOR" -lt 18 ]; then
-    err "Node.js 版本过低（$(node -v)），需要 >= 18"
+  # undici 8.x 要求 Node >= 22.19（低版本 require('undici') 时就会崩溃）
+  if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=19)?0:1)'; then
+    err "Node.js 版本过低（$(node -v)），需要 >= 22.19（依赖 undici 8.x）"
     exit 1
   fi
   ok "Node.js $(node -v)"
@@ -619,6 +656,18 @@ else
   if [ -z "$MYSQL_ROOT" ]; then
     read -rp "MySQL root 密码: " -s MYSQL_ROOT
     printf "\n"
+  fi
+  # 宿主机多实例共用一个 MySQL：同名库已被别的实例使用时，再部署会改掉共享用户密码，
+  # 把旧实例挤下线。检测到这种情况直接拒绝，要求显式指定独立库名/用户。
+  if [ -z "${INSTALL_DB_NAME:-}" ] && [ -z "${EXIST_DB_NAME:-}" ] && command -v mysql >/dev/null 2>&1; then
+    DB_USED="$(mysql -h "${DB_HOST:-127.0.0.1}" -P "${DB_PORT:-3306}" -uroot -p"$MYSQL_ROOT" -N -e \
+      "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME' AND table_name='accounts'" 2>/dev/null || echo 0)"
+    if [ "${DB_USED:-0}" != "0" ]; then
+      err "数据库 $DB_NAME 已被其他实例使用，继续部署会改掉共享账号密码并影响旧实例。"
+      info "请改用独立库名/用户重新运行，例如："
+      info "  INSTALL_DB_NAME=github_hub_2 INSTALL_DB_USER=ghhub_2 bash install.sh"
+      exit 1
+    fi
   fi
   if node scripts/setup-db.js "$MYSQL_ROOT"; then
     ok "数据库初始化完成"

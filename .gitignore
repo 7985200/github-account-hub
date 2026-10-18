@@ -14,6 +14,8 @@ runtime/*.ini
 .env
 .env.local
 .env.*.local
+# install.sh 每次重写 .env 前生成的备份（同样含数据库/root 口令）
+.env.bak.*
 
 # 本地联调临时目录
 .authtest/

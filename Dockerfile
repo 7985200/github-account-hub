@@ -1,8 +1,10 @@
 # ============================================================
 #  GitHub 多账号管家 · 生产镜像
-#  基础镜像 node:22-alpine（应用为纯 JS，无原生依赖，无需编译工具链）
+#  应用为纯 JS，无原生依赖，无需编译工具链
+#  undici 8.x 要求 Node >= 22.19，这里固定到具体 minor，避免旧 22.x 缓存镜像
+#  在 require('undici') 时因缺少 zstd API 直接崩溃
 # ============================================================
-FROM node:22-alpine
+FROM node:22.23-alpine
 
 ENV NODE_ENV=production
 WORKDIR /app
