@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/7985200/github-account-hub"><img alt="GitHub" src="https://img.shields.io/badge/开源地址-7985200%2Fgithub--account--hub-181717?logo=github&labelColor=0a0a0b"></a>
-  <img alt="Node" src="https://img.shields.io/badge/Node.js-%E2%89%A518-0a0a0b?labelColor=0a0a0b">
+  <img alt="Node" src="https://img.shields.io/badge/Node.js-%E2%89%A522.19-0a0a0b?labelColor=0a0a0b">
   <img alt="MySQL" src="https://img.shields.io/badge/MySQL-8.0-0a0a0b?labelColor=0a0a0b">
   <img alt="Docker" src="https://img.shields.io/badge/Docker-%E6%94%AF%E6%8C%81%E4%B8%80%E9%94%AE%E9%83%A8%E7%BD%B2-0a0a0b?logo=docker&labelColor=0a0a0b">
 <img alt="Moe Counter" src="https://count.getloli.com/get/@阿巴阿巴?theme=moebooru">
@@ -37,7 +37,7 @@
 
 | 层 | 技术 |
 |---|---|
-| 后端 | Node.js ≥ 18 · Express 4 · mysql2（连接池 + 事务）、undici（代理通道） |
+| 后端 | Node.js ≥ 22.19（undici 8.x 要求）· Express 4 · mysql2（连接池 + 事务）、undici（代理通道） |
 | 数据库 | MySQL 8.0（utf8mb4，JSON 字段） |
 | 前端 | 原生 HTML / CSS / JavaScript（无框架、无构建步骤） |
 | 安全 | AES-256-GCM 凭据加密（密钥独立文件）· scrypt 管理员密码 · httpOnly 会话 Cookie · 登录限速 |
@@ -61,7 +61,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/7985200/github-account-hub/m
 ```
 
 > - Docker 模式：自动创建数据库与应用账号、建表、构建镜像并启动，全程无需手动操作
-> - 宿主机模式：需要本机已有 Node.js ≥ 18 与 MySQL 8.0，脚本会引导完成初始化并后台启动
+> - 宿主机模式：需要本机已有 Node.js ≥ 22.19 与 MySQL 8.0，脚本会引导完成初始化并后台启动
 > - 非交互安装（CI 场景）：`INSTALL_MODE=1 INSTALL_PORT=24524 INSTALL_BIND=0.0.0.0 INSTALL_CONFIRM=1 bash install.sh`
 > - 重复运行会自动识别已部署的项目并询问操作：**重新部署**（保留数据）/ **更新到最新**（拉取仓库最新代码）/ **部署新实例**（克隆到新目录，独立端口与数据，可与旧实例并存）
 > - 非交互模式下可用 `INSTALL_EXISTING=1|2|3` 指定上述操作
@@ -89,7 +89,7 @@ docker compose exec mysql mysqldump -u root -p"你的root密码" github_hub > ba
 
 ### 方式三：宿主机手动部署
 
-**环境要求**：Node.js ≥ 18（推荐 20/22）· MySQL 8.0（本地或远程均可）
+**环境要求**：Node.js ≥ 22.19 · MySQL 8.0（本地或远程均可）
 
 ```bash
 git clone https://github.com/7985200/github-account-hub.git && cd github-account-hub
@@ -100,6 +100,10 @@ npm start                         # 启动，默认 http://127.0.0.1:24524
 ```
 
 打开站点 → **首次访问会要求创建管理员账号**（与 GitHub 账号无关，是本站自己的登录）。
+
+> 宿主机模式在同一台 MySQL 上部署多个实例时，必须为每个实例指定独立的库名与用户：
+> `INSTALL_DB_NAME=github_hub_2 INSTALL_DB_USER=ghhub_2 bash install.sh`
+> 否则两个实例会共用同一账号，重装/改密时互相挤下线。`install.sh` 的「部署新实例」菜单会自动处理。
 
 > 宿主机长期运行建议：`pm2 start server/index.js --name github-hub`。
 > 从本机直装版迁移到 Docker：导出 `mysqldump` 并导入容器数据库，同时把 `data/secret.key` 复制到 `app-data` 卷，否则已保存的凭据无法解密。
@@ -115,6 +119,7 @@ npm start                         # 启动，默认 http://127.0.0.1:24524
 | `SECRET_KEY_FILE` | `data/secret.key` | 凭据加密密钥文件（**务必备份，丢失则已存凭据无法解密**） |
 | `GITHUB_WEB_PROXY` | `auto` | 「密码换 Token」的初始网页通道：`auto` 自动探测 / `direct` 直连 / `http://host:port`；部署后可在菜单「代理设置」里改 |
 | `COOKIE_SECURE` | `auto` | 会话 Cookie 的 Secure 策略（`auto` 按请求协议判断） |
+| `TRUST_PROXY` | `loopback` | 信任反代 `X-Forwarded-For` 的策略：`loopback` 仅本机反代 / `true` 信任任意反代（Nginx 反代进 Docker 容器时必须）/ `false` / 跳数 |
 
 ## 公网部署建议
 
@@ -126,8 +131,10 @@ npm start                         # 启动，默认 http://127.0.0.1:24524
      proxy_set_header Host $host;
      proxy_set_header X-Forwarded-Proto $scheme;
      proxy_set_header X-Real-IP $remote_addr;
+     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
    }
    ```
+   宿主机直装 + 本机 Nginx 保持默认 `TRUST_PROXY=loopback` 即可；若反代再转发进 Docker 容器（对端是 Docker 网关而不是 loopback），需在 `.env` 设 `TRUST_PROXY=true`，否则登录失败限速会把所有访客视为同一个 IP，一人输错密码就会锁住所有人。
 3. 服务器无法直连 GitHub 时：在「菜单 → 代理设置」填入该服务器的代理（如 `http://127.0.0.1:7890`）；若 `api.github.com` 也不可达，打开「API 请求走代理」开关。
 4. 定期备份 `data/` 目录（加密密钥 + 日志）与数据库。
 
