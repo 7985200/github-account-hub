@@ -55,13 +55,16 @@ router.get(
   '/proxy',
   wrap(async (req, res) => {
     const all = await settings.getAll();
+    const defaults = settings.defaults();
+    /* 默认值可能来自 .env 的 GITHUB_WEB_PROXY，同样可能内嵌凭据 */
+    defaults.web_proxy = proxy.maskProxy(defaults.web_proxy);
     res.json({
       ok: true,
       webProxy: proxy.maskProxy(all.web_proxy),
       apiViaProxy: all.api_via_proxy === '1',
       proxyUser: all.web_proxy_user || '',
       hasProxyPass: !!(all.web_proxy_pass || ''),
-      defaults: settings.defaults(),
+      defaults,
       candidates: ['direct', ...config.webLogin.proxyCandidates],
     });
   })
@@ -103,7 +106,7 @@ router.put(
     const fresh = await settings.getAll();
     res.json({
       ok: true,
-      webProxy: fresh.web_proxy,
+      webProxy: proxy.maskProxy(fresh.web_proxy),
       apiViaProxy: fresh.api_via_proxy === '1',
       proxyUser: fresh.web_proxy_user || '',
       hasProxyPass: !!(fresh.web_proxy_pass || ''),

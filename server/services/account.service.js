@@ -9,6 +9,7 @@ const github = require('./github.service');
 const githubLogin = require('./github-login.service');
 const githubWeb = require('./github-web.service');
 const { encrypt, decrypt, maskSecret, tokenKind } = require('../utils/crypto');
+const { maskProxy } = require('./proxy.service');
 const logger = require('../utils/logger');
 
 class ApiError extends Error {
@@ -233,6 +234,8 @@ async function create(payload = {}) {
     token_kind: token ? tokenKind(token) : '',
     token_hint: token ? maskSecret(token) : '',
   };
+  /* 「账号密码」方式补充了 Token 即升级为 Token 模式，避免状态已验证而徽章仍是「密码」 */
+  if (token) record.mode = 'token';
 
   const id = await withTransaction(async (conn) => {
     const [result] = await conn.execute(
@@ -243,7 +246,7 @@ async function create(payload = {}) {
     await writeLog(
       'account.create',
       `新增账号${record.login ? ` ${record.login}` : ''}（${
-        mode === 'token' ? `Token · ${record.token_kind || 'unknown'}` : '账号密码'
+        record.mode === 'token' ? `Token · ${record.token_kind || 'unknown'}` : '账号密码'
       }）`,
       { accountId: result.insertId },
       conn
@@ -281,8 +284,8 @@ async function update(id, patch = {}) {
   }
   if (patch.token !== undefined && String(patch.token).trim()) {
     const token = String(patch.token).trim();
-    sets.push('token_enc = ?', 'token_kind = ?', 'token_hint = ?');
-    params.push(encrypt(token), tokenKind(token), maskSecret(token));
+    sets.push('token_enc = ?', 'token_kind = ?', 'token_hint = ?', 'mode = ?');
+    params.push(encrypt(token), tokenKind(token), maskSecret(token), 'token');
     touched.push('Token');
   }
   if (patch.password !== undefined && String(patch.password)) {
@@ -411,16 +414,34 @@ async function listRepos(id, { page = 1, perPage = 100 } = {}) {
   const token = row.token_enc ? decrypt(row.token_enc) : null;
   if (!token) throw new ApiError(400, '该账号没有 Token，无法拉取仓库列表');
 
+  const effectivePerPage = clampInt(perPage, 1, 100, 100);
   const res = await github.fetchRepos({
     token,
     page: clampInt(page, 1, 50, 1),
-    perPage: clampInt(perPage, 1, 100, 100),
+    perPage: effectivePerPage,
   });
   if (!res.ok) throw new ApiError(res.transport ? 502 : 400, `拉取仓库失败：${res.message}`);
 
   const repos = Array.isArray(res.data) ? res.data.map(github.normalizeRepo) : [];
+  /* Link 头 rel="last" 的页号换算真实总数；不足一页时就是当前条数 */
+  const link = res.headers && typeof res.headers.get === 'function' ? String(res.headers.get('link') || '') : '';
+  const lastPage = (link.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/) || [])[1];
+  /* Link 头只有页号、没有末页条数：当前不在末页时额外取一次末页，
+     否则 (lastPage-1)*perPage 会把不满页的末页当成满页多算。 */
+  let total = repos.length;
+  if (lastPage) {
+    const last = Number(lastPage);
+    const onLastPage = !/[?&]page=\d+[^>]*>;\s*rel="next"/.test(link);
+    if (onLastPage) {
+      total = (last - 1) * effectivePerPage + repos.length;
+    } else {
+      const tail = await github.fetchRepos({ token, page: last, perPage: effectivePerPage });
+      const tailCount = tail.ok && Array.isArray(tail.data) ? tail.data.length : effectivePerPage;
+      total = (last - 1) * effectivePerPage + tailCount;
+    }
+  }
   await writeLog('repos.fetch', `拉取仓库列表：${repos.length} 个`, { accountId: id });
-  return { total: repos.length, repos, rateLimit: github.parseRateLimit(res.headers) };
+  return { total, repos, rateLimit: github.parseRateLimit(res.headers) };
 }
 
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -457,8 +478,9 @@ function parseRepoInput(input) {
   s = s
     .replace(/^https?:\/\/(www\.)?github\.com\//i, '')
     .replace(/^git@github\.com:/i, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '')
     .replace(/\.git$/i, '')
-    .replace(/[/?#]+$/, '')
     .trim();
   if (!REPO_PATTERN.test(s)) {
     throw new ApiError(400, '仓库格式应为 owner/repo，或直接粘贴 GitHub 仓库链接');
@@ -473,6 +495,7 @@ async function getRepoInfo(repoInput) {
   if (!rows.length) throw new ApiError(400, '还没有带 Token 的账号，无法查询仓库信息');
 
   let lastError = '';
+  let sawNotFound = false;
   for (const row of rows) {
     const token = decrypt(row.token_enc);
     if (!token) continue;
@@ -492,9 +515,15 @@ async function getRepoInfo(repoInput) {
         queriedBy: row.login || null,
       };
     }
-    if (res.status === 404) throw new ApiError(404, `仓库不存在或无权访问：${repo}`);
+    /* 404 只说明「这个账号无权访问」：私有仓库可能对后续账号可见，继续尝试 */
+    if (res.status === 404) {
+      sawNotFound = true;
+      lastError = `仓库不存在或无权访问：${repo}`;
+      continue;
+    }
     lastError = res.message;
   }
+  if (sawNotFound) throw new ApiError(404, `仓库不存在或无权访问：${repo}（已尝试全部 ${rows.length} 个账号）`);
   throw new ApiError(502, `查询仓库失败：${lastError || '未知错误'}`);
 }
 
@@ -611,6 +640,7 @@ async function getTargetUserInfo(input) {
   if (!rows.length) throw new ApiError(400, '还没有带 Token 的账号，无法查询用户信息');
 
   let lastError = '';
+  let sawNotFound = false;
   for (const row of rows) {
     const token = decrypt(row.token_enc);
     if (!token) continue;
@@ -632,9 +662,14 @@ async function getTargetUserInfo(input) {
         queriedBy: row.login || null,
       };
     }
-    if (res.status === 404) throw new ApiError(404, `用户不存在：${username}`);
+    if (res.status === 404) {
+      sawNotFound = true;
+      lastError = `用户不存在：${username}`;
+      continue;
+    }
     lastError = res.message;
   }
+  if (sawNotFound) throw new ApiError(404, lastError || `用户不存在：${username}`);
   throw new ApiError(502, `查询用户失败：${lastError || '未知错误'}`);
 }
 
@@ -1266,70 +1301,91 @@ async function uploadAvatar(id, { password, filename, mime, data } = {}) {
      只有没有可用会话时才会要求输入密码（由 github-web 抛 NEED_PASSWORD / SESSION_EXPIRED）。 */
 
   /* 先用 API 记下「当前头像地址」，作为是否真的改成功的唯一依据。
-     不能用网页里的 img src 判断 —— 那个地址会带邮箱哈希，看起来变了其实图没换。 */
+     不能用网页里的 img src 判断 —— 那个地址会带邮箱哈希，看起来变了其实图没换。
+     内容签名比对共用一个 dispatcher，用完即关（否则每次上传都会泄漏连接池）。 */
   const tokenForCheck = row.token_enc ? decrypt(row.token_enc) : null;
+  let checkDispatcher = null;
   let avatarBefore = '';
   if (tokenForCheck) {
-    const u0 = await github.fetchUser({ token: tokenForCheck });
-    if (u0.ok && u0.data) {
-      /* 比较的是图片内容签名，不是 URL —— 换头像后 URL 字符串不变 */
-      avatarBefore = await githubWeb.avatarSignature(u0.data.avatar_url, await githubWeb.webDispatcher());
+    try {
+      checkDispatcher = await githubWeb.webDispatcher();
+    } catch (err) {
+      if (err && err.code === 'PROXY_UNAVAILABLE') {
+        throw new ApiError(503, err.message, 'PROXY_UNAVAILABLE');
+      }
+      throw err;
+    }
+    try {
+      const u0 = await github.fetchUser({ token: tokenForCheck });
+      if (u0.ok && u0.data) {
+        /* 比较的是图片内容签名，不是 URL —— 换头像后 URL 字符串不变 */
+        avatarBefore = await githubWeb.avatarSignature(u0.data.avatar_url, checkDispatcher);
+      }
+    } catch (err) {
+      /* 拿不到上传前签名只影响变更检测，不阻断上传 */
+      logger.warn('记录上传前头像签名失败（继续上传）', { accountId: id, error: err.message });
     }
   }
 
-  let result;
   try {
-    /* awaitVerify=true：若 GitHub 要求邮箱/设备验证码，返回 428 + verifyId 让前端输入，
-       图片与账号 id 暂存在服务端会话里，等验证通过后继续上传（与「密码换 Token」同一套机制） */
-    result = await githubWeb.uploadAvatar({
-      login: loginName,
-      password,
-      buffer: buf,
-      mime: realMime,
-      filename,
-      awaitVerify: true,
-      payload: { accountId: Number(id), buffer: buf, mime: realMime, filename },
-    });
-  } catch (err) {
-    throw asApiError(err, 'WEB_UPLOAD_FAILED');
-  }
-
-  if (result && result.needsVerify) {
-    await writeLog('account.avatar', `上传头像需要额外验证（${result.verifyType || '未知类型'}），已进入验证码流程`, {
-      accountId: id,
-      level: 'warn',
-    });
-    return {
-      needsVerify: true,
-      verifyId: result.verifyId,
-      verifyType: result.verifyType,
-      hint: result.hint,
-      codeLength: result.codeLength || 0,
-      expiresInSec: result.expiresInSec,
-    };
-  }
-
-  /* 用 API 复核：地址没变就说明裁剪确认没生效，不能报成功 */
-  if (tokenForCheck && avatarBefore) {
-    /* 头像 CDN 有缓存，刚提交完立刻比对会拿到旧图。重试几次再判定，避免假失败。 */
-    let avatarAfter = '';
-    for (let i = 0; i < 4; i += 1) {
-      if (i) await new Promise((resolve) => setTimeout(resolve, 2500));
-      const u1 = await github.fetchUser({ token: tokenForCheck });
-      avatarAfter = u1.ok && u1.data
-        ? await githubWeb.avatarSignature(u1.data.avatar_url, await githubWeb.webDispatcher())
-        : '';
-      if (avatarAfter && avatarAfter !== avatarBefore) break;
+    let result;
+    try {
+      /* awaitVerify=true：若 GitHub 要求邮箱/设备验证码，返回 428 + verifyId 让前端输入，
+         图片与账号 id 暂存在服务端会话里，等验证通过后继续上传（与「密码换 Token」同一套机制） */
+      result = await githubWeb.uploadAvatar({
+        login: loginName,
+        password,
+        buffer: buf,
+        mime: realMime,
+        filename,
+        awaitVerify: true,
+        payload: { accountId: Number(id), buffer: buf, mime: realMime, filename },
+      });
+    } catch (err) {
+      throw asApiError(err, 'WEB_UPLOAD_FAILED');
     }
-    if (avatarAfter && avatarAfter === avatarBefore) {
-      /* 头像内容没变只说明「和上次一样」，不等于失败（重复上传同一张图就是这种情况），
-         所以只记日志，不阻断流程。 */
-      await writeLog('account.avatar', '头像内容与上传前一致（可能是同一张图）', { accountId: id, level: 'warn' });
-      logger.warn('头像内容与上传前一致，按成功处理', { accountId: id });
+
+    if (result && result.needsVerify) {
+      await writeLog('account.avatar', `上传头像需要额外验证（${result.verifyType || '未知类型'}），已进入验证码流程`, {
+        accountId: id,
+        level: 'warn',
+      });
+      return {
+        needsVerify: true,
+        verifyId: result.verifyId,
+        verifyType: result.verifyType,
+        hint: result.hint,
+        codeLength: result.codeLength || 0,
+        expiresInSec: result.expiresInSec,
+      };
+    }
+
+    /* 用 API 复核：地址没变就说明裁剪确认没生效，不能报成功 */
+    if (tokenForCheck && avatarBefore) {
+      /* 头像 CDN 有缓存，刚提交完立刻比对会拿到旧图。重试几次再判定，避免假失败。 */
+      let avatarAfter = '';
+      for (let i = 0; i < 4; i += 1) {
+        if (i) await new Promise((resolve) => setTimeout(resolve, 2500));
+        const u1 = await github.fetchUser({ token: tokenForCheck });
+        avatarAfter = u1.ok && u1.data
+          ? await githubWeb.avatarSignature(u1.data.avatar_url, checkDispatcher)
+          : '';
+        if (avatarAfter && avatarAfter !== avatarBefore) break;
+      }
+      if (avatarAfter && avatarAfter === avatarBefore) {
+        /* 头像内容没变只说明「和上次一样」，不等于失败（重复上传同一张图就是这种情况），
+           所以只记日志，不阻断流程。 */
+        await writeLog('account.avatar', '头像内容与上传前一致（可能是同一张图）', { accountId: id, level: 'warn' });
+        logger.warn('头像内容与上传前一致，按成功处理', { accountId: id });
+      }
+    }
+
+    return finalizeAvatar(id, row, result);
+  } finally {
+    if (checkDispatcher && typeof checkDispatcher.close === 'function') {
+      checkDispatcher.close().catch(() => {});
     }
   }
-
-  return finalizeAvatar(id, row, result);
 }
 
 /** 上传完成后的收尾：回读正式头像地址、落库、写日志 */
@@ -1366,7 +1422,7 @@ function asApiError(err, fallbackCode) {
  * 提交头像上传流程中要求的验证码（邮箱验证码 / 两步验证码）
  * 验证通过后会拿到已验证的网页会话，接着把暂存的图片真正传上去。
  */
-async function verifyAvatarUpload({ verifyId, code } = {}) {
+async function verifyAvatarUpload({ verifyId, code, routeAccountId } = {}) {
   if (!verifyId) throw new ApiError(400, '缺少验证会话标识', 'BAD_REQUEST');
   const codeValue = String(code || '').trim();
   if (!codeValue) throw new ApiError(400, '请输入验证码', 'BAD_REQUEST');
@@ -1382,15 +1438,19 @@ async function verifyAvatarUpload({ verifyId, code } = {}) {
     throw new ApiError(500, '验证已通过，但未取得网页会话', 'NO_SESSION');
   }
 
-  const payload = out.payload || {};
-  const id = Number(payload.accountId);
-  const row = id ? await findRow(id) : null;
-  if (!row) throw new ApiError(404, '账号不存在或已被删除（验证会话可能已过期）', 'VERIFY_EXPIRED');
-  if (!payload.buffer || !payload.buffer.length) {
-    throw new ApiError(410, '图片数据已失效，请重新选择图片', 'IMAGE_EXPIRED');
-  }
-
+  /* 会话一交接过来就由本函数负责：下面任何提前失败都必须释放 dispatcher */
   try {
+    const payload = out.payload || {};
+    if (routeAccountId && payload.accountId && Number(routeAccountId) !== Number(payload.accountId)) {
+      throw new ApiError(400, '验证会话与当前账号不匹配，请回到发起上传的账号面板继续', 'VERIFY_MISMATCH');
+    }
+    const id = Number(payload.accountId);
+    const row = id ? await findRow(id) : null;
+    if (!row) throw new ApiError(404, '账号不存在或已被删除（验证会话可能已过期）', 'VERIFY_EXPIRED');
+    if (!payload.buffer || !payload.buffer.length) {
+      throw new ApiError(410, '图片数据已失效，请重新选择图片', 'IMAGE_EXPIRED');
+    }
+
     if (out.session.settingsStatus && out.session.settingsStatus !== 200) {
       throw new ApiError(428, `验证通过，但仍无法打开个人资料设置页（HTTP ${out.session.settingsStatus}），请重试`, 'SETTINGS_UNAVAILABLE');
     }

@@ -54,7 +54,14 @@ function parseCookies(header) {
     if (i <= 0) continue;
     const k = part.slice(0, i).trim();
     const v = part.slice(i + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
+      if (k) {
+        try {
+          out[k] = decodeURIComponent(v);
+        } catch {
+          /* 畸形编码按原值处理：不能让一个坏 Cookie 把整个请求打成 500 */
+          out[k] = v;
+        }
+      }
   }
   return out;
 }
@@ -190,7 +197,8 @@ async function getStatus(req) {
   const admin = await getAdminRow();
   if (!admin) return { initialized: false, username: null, loggedIn: false };
   const session = await validateSession(getSessionToken(req));
-  return { initialized: true, username: admin.username, loggedIn: !!session };
+  /* 该接口公开：未登录时不回显管理员用户名，避免向匿名访客泄露登录名 */
+  return { initialized: true, username: session ? admin.username : null, loggedIn: !!session };
 }
 
 function validateUsername(username) {

@@ -614,7 +614,8 @@ async function loginAndCreateToken({ login, password, description = 'ghhub-auto'
     logger.info('网页登录自动创建 Token 成功', {
       login: username,
       scopes: created.scopes.length,
-      channel,
+      /* 代理地址可能内嵌 user:pass@，日志里必须脱敏 */
+      channel: proxy.maskProxy(channel),
       note: created.note,
       durationMs,
     });
@@ -842,6 +843,10 @@ async function submitVerificationCode({ verifyId, code } = {}) {
 
   // 探测登录态
   const tokenPage = await request(`${ORIGIN}/settings/tokens/new`, {}, { jar: sess.jar, dispatcher: sess.dispatcher });
+  if (tokenPage.status >= 500) {
+    /* GitHub 自身故障不是「验证码错误」，不能误导用户反复重输 */
+    throw new WebLoginError('GITHUB_ERROR', `GitHub 暂时不可用（HTTP ${tokenPage.status}），请稍后重试`, 502);
+  }
   if (tokenPage.status !== 200) {
     const loc = String(res.headers.get('location') || '');
     const flash = res.status === 200 ? extractFlashError(res.text) : '';
@@ -933,7 +938,8 @@ async function resendVerificationCode({ verifyId } = {}) {
     { jar: sess.jar, dispatcher: sess.dispatcher }
   );
 
-  if (res.status >= 400) {
+  /* 3xx 常见于会话失效后跳回登录页，不能当成「已重发」报成功 */
+  if (res.status >= 300) {
     const reason = extractFlashError(res.text);
     throw new WebLoginError('RESEND_FAILED', reason || `重发失败（HTTP ${res.status}）`, 502);
   }

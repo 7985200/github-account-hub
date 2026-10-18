@@ -24,7 +24,10 @@ const config = {
   publicDir: path.join(ROOT, 'public'),
   dataDir: path.resolve(ROOT, process.env.DATA_DIR || 'data'),
   logDir: path.resolve(ROOT, process.env.LOG_DIR || 'logs'),
-  keyFile: path.resolve(ROOT, process.env.SECRET_KEY_FILE || 'data/secret.key'),
+  // 密钥默认跟随 DATA_DIR；显式设置 SECRET_KEY_FILE 时以其为准
+  keyFile: process.env.SECRET_KEY_FILE
+    ? path.resolve(ROOT, process.env.SECRET_KEY_FILE)
+    : path.join(path.resolve(ROOT, process.env.DATA_DIR || 'data'), 'secret.key'),
 
   db: {
     host: process.env.DB_HOST || '127.0.0.1',

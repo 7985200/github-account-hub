@@ -19,9 +19,20 @@ const systemRoutes = require('./routes/system.routes');
 const app = express();
 
 app.disable('x-powered-by');
-// 信任本机反代（Nginx/宝塔等）转发的 X-Forwarded-For/Proto；
-// 直连请求（非 loopback）不受影响，避免伪造
-app.set('trust proxy', 'loopback');
+// 信任反代转发的 X-Forwarded-For/Proto，可用 TRUST_PROXY 覆盖：
+//   loopback（默认，仅本机反代）| true（信任任意反代，如 Nginx 反代进 Docker 发布端口）| false | 跳数
+// 注意：反代进 Docker 容器时对端是 Docker 网关而非 loopback，不设 true 的话
+// 登录失败限速会把所有客户端视为同一个 IP，一人输错密码就会锁住所有人
+const trustProxy = String(process.env.TRUST_PROXY || 'loopback').trim().toLowerCase();
+if (['false', '0', 'off'].includes(trustProxy)) {
+  app.disable('trust proxy');
+} else if (['true', '1', 'all'].includes(trustProxy)) {
+  app.set('trust proxy', true);
+} else if (/^\d+$/.test(trustProxy)) {
+  app.set('trust proxy', Number(trustProxy));
+} else {
+  app.set('trust proxy', trustProxy); // 'loopback' 或自定义网段
+}
 
 /* 头像上传：图片以 base64 传输（1MB 图片 ≈ 1.4MB base64），单独放宽上限；
    body-parser 解析过一次后会置 req._body，下面的全局 256kb 解析器会自动跳过 */

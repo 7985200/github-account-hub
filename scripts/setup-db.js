@@ -40,6 +40,9 @@ async function main() {
 
   for (const host of ['127.0.0.1', 'localhost', '%']) {
     await conn.query(`CREATE USER IF NOT EXISTS ?@? IDENTIFIED BY ?`, [appUser, host, appPassword]);
+    /* CREATE USER IF NOT EXISTS 对已存在的用户不会修改密码：显式 ALTER 同步，
+       否则换 DB_PASSWORD 或部署新实例后，迁移会直接 Access denied */
+    await conn.query(`ALTER USER ?@? IDENTIFIED BY ?`, [appUser, host, appPassword]);
     await conn.query(`GRANT ALL PRIVILEGES ON \`${database}\`.* TO ?@?`, [appUser, host]);
   }
   await conn.query('FLUSH PRIVILEGES');

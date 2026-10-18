@@ -202,7 +202,7 @@ router.post(
   '/:id/avatar/verify',
   wrap(async (req, res) => {
     const { verifyId, code } = req.body || {};
-    res.json({ ok: true, ...(await service.verifyAvatarUpload({ verifyId, code })) });
+    res.json({ ok: true, ...(await service.verifyAvatarUpload({ verifyId, code, routeAccountId: req.params.id })) });
   })
 );
 

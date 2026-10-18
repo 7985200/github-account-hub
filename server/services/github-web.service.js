@@ -30,6 +30,7 @@ const logger = require('../utils/logger');
    - 全局 fetch 与同项目 undici 的 ProxyAgent 不兼容
    - 全局 FormData 在 undici fetch 下不会序列化成 multipart（会变成 '[object FormData]'） */
 const { fetch, FormData } = require('undici');
+const config = require('../config');
 const loginSvc = require('./github-login.service');
 const { openWebSession, WebLoginError, ORIGIN, UA } = loginSvc;
 const { encrypt, decrypt } = require('../utils/crypto');
@@ -50,7 +51,7 @@ async function webDispatcher() {
  * 缓存后，重试直接复用已登录会话，不再消耗登录额度。
  */
 /* 登录 Cookie 持久化存储（按账号，加密落盘）。放在 data/ 下，已在 .gitignore 内。 */
-const SESSION_STORE = path.join(__dirname, '..', '..', 'data', 'web-sessions.json');
+const SESSION_STORE = path.join(config.dataDir, 'web-sessions.json');
 
 function readStore() {
   try {
@@ -128,21 +129,12 @@ const MAX_BYTES = 1024 * 1024; // GitHub 头像上限 1MB
 /** 把页面快照落盘，失败时便于排查（同 verify-debug 的做法） */
 function saveDebug(html, login) {
   try {
-    const dir = path.join(__dirname, '..', '..', 'data');
+    const dir = config.dataDir;
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `avatar-debug-${String(login).replace(/[^\w.-]/g, '_')}-${Date.now()}.html`);
     fs.writeFileSync(file, html, 'utf8');
-    /* 只保留最近 3 个快照，避免长期堆积（页面里含邮箱与 CSRF token） */
-    try {
-      const kept = fs
-        .readdirSync(dir)
-        .filter((n) => /^avatar-debug-.*\.html$/.test(n))
-        .sort()
-        .slice(-3);
-      for (const n of fs.readdirSync(dir)) {
-        if (/^avatar-debug-.*\.html$/.test(n) && !kept.includes(n)) fs.unlinkSync(path.join(dir, n));
-      }
-    } catch { /* 清理失败不影响主流程 */ }
+    /* 只保留最近 3 个快照；按 mtime 而非文件名排序，避免多账号时误删刚写入的文件 */
+    pruneDebugFiles(dir, 'avatar-debug-', 3);
     logger.warn('头像表单解析失败，已保存页面快照', { file });
     return file;
   } catch (err) {
@@ -312,7 +304,7 @@ function summarizeForms(html) {
 /** 头像上传失败时的现场快照 */
 function dumpAvatarFailure(payload, { login } = {}) {
   try {
-    const dir = path.join(__dirname, '..', '..', 'data');
+    const dir = config.dataDir;
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const stamp = Date.now();
     const safeLogin = String(login || 'unknown').replace(/[^\w.-]/g, '_');
@@ -386,11 +378,17 @@ function assertImage({ buffer, mime }) {
 
 /** 拉取「个人资料设置页」——头像上传所需参数都在这一页 */
 async function fetchSettingsPage({ jar, dispatcher }) {
-  const res = await fetch(`${ORIGIN}/settings/profile`, {
-    headers: { 'User-Agent': UA, Accept: 'text/html', Cookie: jar.header() },
-    ...(dispatcher ? { dispatcher } : {}),
-    redirect: 'manual',
-  });
+  let res;
+  try {
+    res = await fetch(`${ORIGIN}/settings/profile`, {
+      headers: { 'User-Agent': UA, Accept: 'text/html', Cookie: jar.header() },
+      ...(dispatcher ? { dispatcher } : {}),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (err) {
+    throw new WebLoginError('NETWORK', `打开个人资料设置页失败：${err.message}`, 502);
+  }
   /* 必须回收响应里的 Set-Cookie：GitHub 打开设置页时会轮换 _gh_sess，
      页面里的 CSRF token 是跟「新会话」绑定的。继续用旧 Cookie 配新 token，
      提交上传策略时一定被判为 CSRF 失败（422 "Your browser did something unexpected"）。 */
@@ -612,7 +610,7 @@ async function applyAvatarCrop({ assetId, defaultCrop, jar, dispatcher, login, s
   const html = page.text || '';
   /* 把裁剪页存下来，便于核对表单字段与其初始值 */
   try {
-    const dir = path.join(__dirname, '..', '..', 'data');
+    const dir = config.dataDir;
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `avatar-crop-${assetId}.html`), html, 'utf8');
     pruneDebugFiles(dir, 'avatar-crop-', 10);

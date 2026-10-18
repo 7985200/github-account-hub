@@ -702,16 +702,35 @@
     /* 记住发起时的账号：请求回来时若已经切到别的账号，直接丢弃结果，
        否则 A 账号的仓库列表会被渲染到 B 账号上。 */
     var reqId = Number(account.id);
-    api('/api/accounts/' + reqId + '/repos?page=1&perPage=100')
-      .then(function (data) {
+    /* README 承诺「拉取全部仓库」：每页 100，向后翻页直到不足一页（上限 10 页防失控） */
+    var collected = [];
+    var fetchPage = function (page) {
+      return api('/api/accounts/' + reqId + '/repos?page=' + page + '&perPage=100').then(function (data) {
+        if (reqId !== state.reposAccountId) return null;
+        var list = Array.isArray(data.repos) ? data.repos : [];
+        collected = collected.concat(list);
+        $('#reposCount').textContent = '已加载 ' + collected.length + ' 个仓库…';
+        if (list.length >= 100 && page < 10) return fetchPage(page + 1);
+        return null;
+      });
+    };
+    fetchPage(1)
+      .then(function () {
         if (reqId !== state.reposAccountId) return;
-        state.repos = Array.isArray(data.repos) ? data.repos : [];
+        state.repos = collected;
         renderRepos();
       })
       .catch(function (err) {
         if (reqId !== state.reposAccountId) return;
-        $('#reposList').innerHTML = '';
-        showFormError($('#reposError'), err.message);
+        if (collected.length) {
+          /* 已经拿到部分页：先展示，再提示剩余未加载 */
+          state.repos = collected;
+          renderRepos();
+          showFormError($('#reposError'), '仅加载到前 ' + collected.length + ' 个仓库：' + err.message);
+        } else {
+          $('#reposList').innerHTML = '';
+          showFormError($('#reposError'), err.message);
+        }
       });
   }
 
@@ -1373,21 +1392,21 @@
     openModal($('#healthModal'));
     api('/api/health')
       .then(function (data) {
-        renderHealth(data.service || {}, data.database || {});
+        renderHealth(data);
       })
       .catch(function (err) {
         body.innerHTML = '<div class="form-error">加载失败：' + esc(err.message) + '</div>';
       });
   }
 
-  function renderHealth(svc, db) {
+  function renderHealth(data) {
     /* /api/health 是公开接口，只回 { ok }，避免向未登录者泄露数据库版本、
        连接数、错误原文等内部信息。所以这里只展示「正常 / 异常」，
        需要细节请看服务端日志。 */
-    var ok = db && db.status === 'error' ? false : true;
+    var ok = !!(data && data.ok);
     var rows = [
-      ['服务状态', ok ? '正常' : '数据库不可用'],
-      ['数据库', db && db.status === 'error' ? '连接失败（详见服务端日志）' : '已连接']
+      ['服务状态', ok ? '正常' : '异常'],
+      ['数据库', ok ? '已连接' : '连接失败（详见服务端日志）']
     ];
     $('#healthBody').innerHTML = rows
       .map(function (r) {

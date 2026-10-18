@@ -376,9 +376,9 @@ async function testChannelConfig(cfgRaw) {
     if (ok) {
       return {
         available: true,
-        channel: url,
-        tried,
-        message: url === 'direct' ? 'github.com 可直连' : `代理可用（${url}）`,
+        channel: url === 'direct' ? url : maskProxy(url),
+        tried: tried.map((u) => (u === 'direct' ? u : maskProxy(u))),
+        message: url === 'direct' ? 'github.com 可直连' : `代理可用（${maskProxy(url)}）`,
       };
     }
   }
@@ -394,7 +394,9 @@ async function testChannelConfig(cfgRaw) {
 async function checkChannel() {
   try {
     const url = await resolveWebChannel();
-    return { available: true, channel: url, message: url === 'direct' ? '直连可用' : `代理可用（${url}）` };
+    /* 地址可能内嵌代理凭据，回显给前端前必须脱敏 */
+    const masked = url === 'direct' ? url : maskProxy(url);
+    return { available: true, channel: masked, message: url === 'direct' ? '直连可用' : `代理可用（${masked}）` };
   } catch (err) {
     return { available: false, channel: null, message: err.message };
   }
