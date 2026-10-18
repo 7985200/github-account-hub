@@ -5,6 +5,7 @@
   <img alt="Node" src="https://img.shields.io/badge/Node.js-%E2%89%A518-0a0a0b?labelColor=0a0a0b">
   <img alt="MySQL" src="https://img.shields.io/badge/MySQL-8.0-0a0a0b?labelColor=0a0a0b">
   <img alt="Docker" src="https://img.shields.io/badge/Docker-%E6%94%AF%E6%8C%81%E4%B8%80%E9%94%AE%E9%83%A8%E7%BD%B2-0a0a0b?logo=docker&labelColor=0a0a0b">
+<img alt="Moe Counter" src="https://count.getloli.com/get/@阿巴阿巴?theme=moebooru">
 </p>
 
 本地优先的 GitHub 多账号集中管理面板。**Node.js + Express + MySQL** 全栈（零框架、零构建、零 CDN），黑白极简双主题。
