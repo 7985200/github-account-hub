@@ -39,7 +39,9 @@ hr()    { printf "%s\n" "${C_DIM}───────────────�
 backup_before_update() {
   local dir="$1"
   local stamp name root ans tmp target
-  local dumped=0
+  local dumped=0 skipdata=0
+  local compose="" cid="" svc="" rootpw="" dbname="" dbuser="" dbpass="" dbhost="" dbport=""
+  local m_user="" m_pass=""
 
   stamp="$(date '+%Y年%m月%d日')"
   name="${stamp}备份.zip"
@@ -59,6 +61,7 @@ backup_before_update() {
 
   read -rp "备份保存目录 [默认 /github-vote]: " root || true
   root="${root:-/github-vote}"
+  # shellcheck disable=SC2088  # 下面是 case 模式匹配，不是路径展开，不会也不需要展开 ~
   case "$root" in
     "~")   root="$HOME" ;;
     "~/"*) root="$HOME/${root#\~/}" ;;
@@ -83,56 +86,178 @@ backup_before_update() {
     fi
   fi
 
-  tmp="$(mktemp -d 2>/dev/null || echo "/tmp/ghhub-backup-$$")"
-  mkdir -p "$tmp" 2>/dev/null || { warn "临时目录创建失败，已跳过备份"; return 1; }
+  # 临时目录优先放在备份目标所在分区：/tmp 在多数发行版是 tmpfs（内存盘），
+  # 数据库几个 GB 时会写满内存甚至触发 OOM，放同分区则没有这个风险
+  tmp=""
+  if [ -d "$root" ] && [ -w "$root" ]; then
+    mkdir -p "$root/.ghhub-bktmp" 2>/dev/null && \
+      tmp="$(mktemp -d "$root/.ghhub-bktmp/bk.XXXXXX" 2>/dev/null || true)"
+  fi
+  if [ -z "$tmp" ]; then
+    tmp="$(mktemp -d 2>/dev/null || echo "/tmp/ghhub-backup-$$")"
+    mkdir -p "$tmp" 2>/dev/null || { warn "临时目录创建失败，已跳过备份"; return 1; }
+  fi
 
   # 1) data 目录（加密密钥与登录态都在这里，最关键）
-  if [ -d "$dir/data" ]; then
+  case "$root/" in
+    "$dir/data/"*) warn "备份目录位于 data/ 内部，跳过 data/ 复制以免归档自我嵌套"; skipdata=1 ;;
+  esac
+  if [ "$skipdata" -eq 0 ] && [ -d "$dir/data" ]; then
     if cp -a "$dir/data" "$tmp/data" 2>/dev/null; then
       ok "已收集 data/ 目录"
     else
       warn "data/ 目录复制失败"
     fi
-  else
+  elif [ "$skipdata" -eq 0 ]; then
     warn "未找到 $dir/data 目录，跳过"
   fi
 
-  # 2) 数据库：优先 mysqldump（Docker），其次复制数据目录（宿主机）
-  if command -v docker >/dev/null 2>&1 && [ -f "$dir/docker-compose.yml" ]; then
-    local cid rootpw dbname
-    cid="$(cd "$dir" && { docker compose ps -q db 2>/dev/null || true; } | head -1 || true)"
-    if [ -n "$cid" ]; then
-      rootpw="$( { grep -E '^MYSQL_ROOT_PASSWORD=' "$dir/.env" 2>/dev/null || true; } | cut -d= -f2- | tr -d '"' || true)"
-      dbname="$( { grep -E '^MYSQL_DATABASE=' "$dir/.env" 2>/dev/null || true; } | cut -d= -f2- | tr -d '"' || true)"
-      dbname="${dbname:-github_hub}"
-      if [ -n "$rootpw" ] && docker exec "$cid" mysqldump -uroot -p"$rootpw" --single-transaction "$dbname" >"$tmp/database.sql" 2>/dev/null; then
+  # 1b) .env：里面有 DB_PASSWORD / MYSQL_ROOT_PASSWORD，
+  #     不备份的话，恢复数据库后密码对不上照样连不上
+  if [ -f "$dir/.env" ] && [ "$skipdata" -eq 0 ]; then
+    if cp "$dir/.env" "$tmp/.env" 2>/dev/null; then
+      ok "已收集 .env（数据库口令与配置）"
+      chmod 600 "$tmp/.env" 2>/dev/null || true
+    else
+      warn ".env 复制失败"
+    fi
+  fi
+
+  # 2) 从 .env 读数据库配置
+  #    compose 用的是 DB_NAME/DB_USER/DB_PASSWORD，宿主机模式用 DB_*；
+  #    MYSQL_DATABASE 只在用户手写 .env 时存在，作为兼容项保留
+  #    注意 tr -d '\r'：.env 若在 Windows 上编辑过会带 CRLF，密码末尾的 \r 会让 mysqldump 认证失败
+  if [ -f "$dir/.env" ]; then
+    rootpw="$( { grep -E '^MYSQL_ROOT_PASSWORD=' "$dir/.env" 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' )"
+    dbname="$( { grep -E '^(DB_NAME|MYSQL_DATABASE)=' "$dir/.env" 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' )"
+    dbuser="$( { grep -E '^DB_USER=' "$dir/.env" 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' )"
+    dbpass="$( { grep -E '^DB_PASSWORD=' "$dir/.env" 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' )"
+    dbhost="$( { grep -E '^DB_HOST=' "$dir/.env" 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' )"
+    dbport="$( { grep -E '^DB_PORT=' "$dir/.env" 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' )"
+  fi
+  dbname="${dbname:-github_hub}"
+
+  # 3) Docker 部署：探测 compose 命令（备份发生在 COMPOSE_CMD 赋值之前，这里必须自己探）
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+      compose="docker compose"
+    elif command -v docker-compose >/dev/null 2>&1; then
+      compose="docker-compose"
+    fi
+  fi
+
+  # 服务名不能写死：本项目叫 mysql，其他编排可能叫 db。
+  # 先按 compose 文件里 image 含 mysql/mariadb 的服务解析，再用常见名兜底
+  if [ -n "$compose" ] && [ -f "$dir/docker-compose.yml" ]; then
+    svc="$(awk '
+      /^services:[[:space:]]*$/ { inb = 1; next }
+      inb && /^[^[:space:]#]/    { inb = 0 }
+      inb && /^  [A-Za-z0-9_.-]+:[[:space:]]*$/ {
+        n = $1; sub(/:.*/, "", n); cur = n; next
+      }
+      inb && /image:/ && tolower($0) ~ /(mysql|mariadb)/ { print cur; exit }
+    ' "$dir/docker-compose.yml" 2>/dev/null | tr -d ' \r')"
+    if [ -z "$svc" ]; then
+      for s in db mysql database mariadb; do
+        cid="$( cd "$dir" 2>/dev/null || exit 0; $compose ps -q "$s" 2>/dev/null | head -1 || true )"
+        if [ -n "$cid" ]; then svc="$s"; break; fi
+      done
+    fi
+    if [ -n "$svc" ] && [ -z "$cid" ]; then
+      cid="$( cd "$dir" 2>/dev/null || exit 0; $compose ps -q "$svc" 2>/dev/null | head -1 || true )"
+    fi
+  fi
+
+  if [ -n "$cid" ] && [ -n "$rootpw" ]; then
+    # 用 MYSQL_PWD 传密码，避免口令出现在容器内的进程列表里
+    if docker exec -e MYSQL_PWD="$rootpw" "$cid" \
+         mysqldump -uroot --single-transaction --routines --events "$dbname" \
+         >"$tmp/database.sql" 2>"$tmp/dump.err"; then
+      if [ -s "$tmp/database.sql" ]; then
         dumped=1
-        ok "已导出数据库（Docker）"
+        ok "已导出数据库（容器 $svc / 库 $dbname / $(du -h "$tmp/database.sql" 2>/dev/null | cut -f1)）"
+      fi
+    else
+      warn "容器内 mysqldump 失败：$(head -c 200 "$tmp/dump.err" 2>/dev/null | tr '\n' ' ')"
+      rm -f "$tmp/database.sql"
+    fi
+  fi
+
+  # 4) 宿主机部署：本机有 mysqldump 就优先用它（一致性远好于直接复制正在写入的数据目录）
+  if [ "$dumped" -eq 0 ] && command -v mysqldump >/dev/null 2>&1; then
+    m_user="${dbuser:-root}"
+    m_pass="$dbpass"
+    [ -n "$rootpw" ] && { m_user="root"; m_pass="$rootpw"; }
+    if [ -n "$m_pass" ]; then
+      if MYSQL_PWD="$m_pass" mysqldump \
+           -h "${dbhost:-127.0.0.1}" -P "${dbport:-3306}" -u "$m_user" \
+           --single-transaction --routines --events "$dbname" \
+           >"$tmp/database.sql" 2>"$tmp/dump.err"; then
+        if [ -s "$tmp/database.sql" ]; then
+          dumped=1
+          ok "已导出数据库（本机 mysqldump / 库 $dbname / $(du -h "$tmp/database.sql" 2>/dev/null | cut -f1)）"
+        fi
+      else
+        rm -f "$tmp/database.sql"
       fi
     fi
   fi
 
+  # 5) 最后兜底：复制 MySQL 数据目录（仅免安装版实例存在该路径）
   if [ "$dumped" -eq 0 ] && [ -d "$dir/runtime/mysql/data" ]; then
     if cp -a "$dir/runtime/mysql/data" "$tmp/mysql-data" 2>/dev/null; then
       dumped=1
-      ok "已复制 MySQL 数据目录"
+      warn "MySQL 正在运行时直接复制数据目录，备份可能不一致；建议停库后再备份"
     else
       warn "MySQL 数据目录复制失败"
     fi
   fi
 
   if [ "$dumped" -eq 0 ]; then
-    warn "未能导出数据库，本次备份只包含 data/ 目录"
+    err "数据库没有备份成功！账号数据都存在数据库里，只有 data/ 无法恢复账号"
+    warn "请手动导出后妥善保存：mysqldump -u<用户> -p <库名> > backup.sql"
   fi
 
-  # 3) 元信息，便于日后确认对应哪个版本
+  # 6) 元信息，便于日后确认对应哪个版本
   {
     echo "备份时间: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "项目目录: $dir"
+    echo "数据库名: $dbname"
+    echo "数据库备份: $([ "$dumped" -eq 1 ] && echo 已包含 || echo 未包含（需手动导出）)"
     echo "代码版本: $(cd "$dir" 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
   } >"$tmp/BACKUP-INFO.txt" 2>/dev/null || true
 
-  # 4) 打包为 zip；没有 zip 命令时退化为 tar.gz
+  # 7) 恢复说明：只给一个 database.sql，多数人不知道该怎么导回去
+  cat >"$tmp/RESTORE.txt" 2>/dev/null <<RESTORE
+本备份由 install.sh 在更新前自动生成，请连同 BACKUP-INFO.txt 一起保管。
+
+包含内容
+  data/         加密密钥 secret.key 与网页登录态（最关键，丢了已保存的 Token 就解不开）
+  .env          数据库口令与配置（等同密码文件，注意保管）
+  database.sql  数据库导出（账号、日志等数据都在这）
+  mysql-data/   仅宿主机免安装版 MySQL 才会有的数据目录副本
+
+恢复步骤（Docker 部署，在项目根目录执行；<解压目录> 换成你解开本压缩包的路径）
+  1) 停止服务
+       docker compose down
+  2) 还原数据目录与配置
+       rm -rf data && cp -a <解压目录>/data ./data
+       cp <解压目录>/.env ./.env
+  3) 启动数据库并导入（<库名> 见 BACKUP-INFO.txt，一般是 $dbname）
+       docker compose up -d mysql
+       docker compose exec -T mysql sh -c 'exec mysql -uroot -p"\$MYSQL_ROOT_PASSWORD" <库名>' < <解压目录>/database.sql
+  4) 重建并启动应用
+       docker compose up -d --build
+
+两个必须注意的点
+  - data/secret.key 必须和数据库一起还原：Token 是用它加密的，缺了就算数据库完整也解不开
+  - .env 里的 DB_PASSWORD 要与数据库里的应用账号密码一致，否则应用连不上库
+
+如果 database.sql 不存在（BACKUP-INFO 里写「未包含」），说明当时导出失败，
+需要在旧环境里手动执行：mysqldump -u<用户> -p <库名> > backup.sql
+RESTORE
+
+  # 8) 打包为 zip；没有 zip 命令时退化为 tar.gz
   target="$root/$name"
   # 同一天多次更新时加序号，避免静默覆盖上一次的备份
   if [ -e "$target" ]; then
@@ -165,6 +290,7 @@ backup_before_update() {
   fi
 
   rm -rf "$tmp" 2>/dev/null || true
+  rmdir "$root/.ghhub-bktmp" 2>/dev/null || true
   if [ -f "$target" ]; then
     ok "备份大小：$( { du -h "$target" 2>/dev/null || true; } | cut -f1 || true)"
   fi
@@ -216,7 +342,7 @@ if [ -f "server/index.js" ] && [ -f "docker-compose.yml" ]; then
   PROJECT_DIR="$PWD"
 # 2) 脚本自身所在目录是项目（排除 /dev/fd/* 等进程替换与管道场景）
 elif [ -n "$SELF" ] && [ -f "$SELF" ] && [[ "$SELF" != /dev/fd/* ]] && [[ "$SELF" != /dev/stdin ]]; then
-  SELF_DIR="$(cd "$(dirname "$SELF")" 2>/dev/null && pwd || true)"
+  SELF_DIR="$( cd "$(dirname "$SELF")" 2>/dev/null || exit 0; pwd )"
   if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/server/index.js" ]; then
     PROJECT_DIR="$SELF_DIR"
   fi
