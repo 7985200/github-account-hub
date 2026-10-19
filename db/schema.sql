@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS `accounts` (
   `scopes`           JSON          NULL                 COMMENT 'OAuth 权限范围快照',
   `profile`          JSON          NULL                 COMMENT 'GitHub 资料快照',
   `rate_limit`       JSON          NULL                 COMMENT 'API 配额快照',
-  `status`           ENUM('unverified','active','invalid','password-only','error')
+  `status`           ENUM('unverified','active','invalid','password-only','error','suspended')
                      NOT NULL DEFAULT 'unverified'      COMMENT '凭据状态',
   `status_message`   VARCHAR(500)  NOT NULL DEFAULT ''  COMMENT '状态说明',
   `last_verified_at` DATETIME      NULL                 COMMENT '最近验证时间',

@@ -37,6 +37,37 @@ function extractMessage(res, data) {
 }
 
 /**
+ * 把 GitHub 的账号级错误翻译成面向用户的中文提示。
+ * 原始错误仍由调用方写入服务端日志与操作日志，界面只展示这段可读文案。
+ */
+const ACCOUNT_ERROR_HINTS = [
+  {
+    re: /(?:sorry[.!,]?\s*)?\b(?:your\s+|this\s+)?account\s+(?:(?:has\s+been|was|is(?:\s+currently)?)\s+)?(?:suspended|locked)\b/i,
+    message: '该账号因违反服务条款、存在安全风险或异常活动，被平台方主动暂停了访问权限，完整错误请看日志',
+  },
+  {
+    re: /(?:sorry[.!,]?\s*)?\b(?:your\s+|this\s+)?account\s+(?:(?:has\s+been|was|is(?:\s+currently)?)\s+)?flagged\b/i,
+    message: '该账号被 GitHub 标记为存在风险，访问权限受限，完整错误请看日志',
+  },
+  {
+    re: /(?:sorry[.!,]?\s*)?\b(?:your\s+|this\s+)?account\s+(?:(?:has\s+been|was|is(?:\s+currently)?)\s+)?disabled\b/i,
+    message: '该账号已被 GitHub 停用，无法继续访问，完整错误请看日志',
+  },
+];
+
+/** 命中账号级封禁/暂停类错误时返回中文提示，否则返回空串 */
+function explainAccountError(message, status) {
+  /* 账号级封禁通常是 401/403；其它状态码不参与判定，避免把限流/仓库权限错误误判 */
+  if (status && status !== 401 && status !== 403) return '';
+  const text = String(message || '');
+  if (!text) return '';
+  for (const item of ACCOUNT_ERROR_HINTS) {
+    if (item.re.test(text)) return item.message;
+  }
+  return '';
+}
+
+/**
  * 发起一次 GitHub API 调用
  * @returns {{ok:boolean, transport:boolean, status:number, message:string, headers:Headers|null, data:any}}
  */
@@ -399,6 +430,7 @@ module.exports = {
   parseRateLimit,
   normalizeProfile,
   normalizeRepo,
+  explainAccountError,
   /* 资料编辑 */
   EDITABLE_PROFILE_FIELDS,
   BIO_MAX,

@@ -116,7 +116,7 @@ async function getStats() {
     `SELECT
        COUNT(*)                                                        AS total,
        COALESCE(SUM(status = 'active'), 0)                             AS active,
-       COALESCE(SUM(status IN ('invalid', 'error')), 0)                AS abnormal,
+       COALESCE(SUM(status IN ('invalid', 'error', 'suspended')), 0)   AS abnormal,
        COALESCE(SUM(status = 'password-only'), 0)                      AS passwordOnly,
        COALESCE(SUM(status = 'unverified'), 0)                         AS unverified,
        COALESCE(SUM(CAST(profile ->> '$.publicRepos' AS SIGNED)), 0)   AS publicRepos,
@@ -352,10 +352,42 @@ async function refresh(id) {
         starred !== null ? `，Star ${starred}` : ''
       }）`;
     } else {
-      patch.status = res.transport ? 'error' : 'invalid';
-      patch.status_message = res.transport ? res.message : `Token 无效或已过期：${res.message}`;
+      const friendly = github.explainAccountError(res.message, res.status);
+      if (friendly) {
+        patch.status = 'suspended';
+        patch.status_message = friendly;
+        /* 完整错误只进日志（服务端文件 + 操作日志），账号卡片展示可读文案 */
+        logger.warn('GitHub 账号不可用', {
+          accountId: id,
+          login: row.login,
+          status: res.status,
+          githubMessage: res.message,
+        });
+        logDetail = `Token 验证失败：${friendly}（完整错误：${res.message}）`;
+      } else if (
+        row.status === 'suspended' &&
+        (res.transport || res.status === 429 || res.status === 403 || res.status >= 500)
+      ) {
+        /* 限流/5xx/网络/非封禁 403 都可能是临时问题，不能把已封禁标记冲掉 */
+        patch.status = 'suspended';
+        patch.status_message = String(
+          row.status_message || '该账号仍处于封禁/暂停状态，完整错误请看日志'
+        ).slice(0, 500);
+        logger.warn('GitHub 验证失败（保留封禁状态）', {
+          accountId: id,
+          login: row.login,
+          status: res.status,
+          githubMessage: res.message,
+        });
+        logDetail = `Token 验证失败（保留封禁状态）：${String(res.message || '').slice(0, 400)}`;
+      } else {
+        patch.status = res.transport ? 'error' : 'invalid';
+        patch.status_message = String(
+          res.transport ? res.message : `Token 无效或已过期：${res.message}`
+        ).slice(0, 500);
+        logDetail = `Token 验证失败：${patch.status_message}`;
+      }
       logLevel = 'warn';
-      logDetail = `Token 验证失败：${patch.status_message}`;
     }
   } else if (password) {
     const res = await github.fetchUser({ basic: { login: row.login, password } });
@@ -371,7 +403,7 @@ async function refresh(id) {
       logDetail = `基础认证通过：${profile.login}`;
     } else {
       patch.status = res.transport ? 'error' : 'password-only';
-      patch.status_message = res.transport ? res.message : PASSWORD_AUTH_DISABLED_MSG;
+      patch.status_message = String(res.transport ? res.message : PASSWORD_AUTH_DISABLED_MSG).slice(0, 500);
       logLevel = res.transport ? 'warn' : 'info';
       logDetail = '密码凭据已保存；GitHub 现已停用密码直连认证';
     }
@@ -560,11 +592,15 @@ async function batchStar({ accountIds, repo: repoInput, action = 'star' } = {}) 
       results.push({ ...base, status: 'skipped', message: '该账号没有 Token，已跳过' });
       continue;
     }
+    if (row.status === 'suspended') {
+      results.push({ ...base, status: 'skipped', message: '该账号已被平台封禁/暂停，已跳过' });
+      continue;
+    }
 
     // 预检：区分「本次新增」与「之前已操作」，同时尽早暴露 Token 问题
     const check = await github.checkStarred({ token, repo });
     if (check.transport) {
-      results.push({ ...base, status: 'failed', message: check.message });
+      results.push({ ...base, status: 'failed', message: github.explainAccountError(check.message, check.status) || check.message });
       await sleep(STAR_DELAY_MS);
       continue;
     }
@@ -596,7 +632,11 @@ async function batchStar({ accountIds, repo: repoInput, action = 'star' } = {}) 
         message: action === 'star' ? 'Star 成功' : '已取消 Star',
       });
     } else {
-      results.push({ ...base, status: 'failed', message: res.message || `执行失败（HTTP ${res.status}）` });
+      results.push({
+        ...base,
+        status: 'failed',
+        message: github.explainAccountError(res.message, res.status) || res.message || `执行失败（HTTP ${res.status}）`,
+      });
     }
     await sleep(STAR_DELAY_MS);
   }
@@ -706,10 +746,14 @@ async function batchFollow({ accountIds, username: usernameInput, action = 'foll
       results.push({ ...base, status: 'skipped', message: '该账号没有 Token，已跳过' });
       continue;
     }
+    if (row.status === 'suspended') {
+      results.push({ ...base, status: 'skipped', message: '该账号已被平台封禁/暂停，已跳过' });
+      continue;
+    }
 
     const check = await github.checkFollowing({ token, username });
     if (check.transport) {
-      results.push({ ...base, status: 'failed', message: check.message });
+      results.push({ ...base, status: 'failed', message: github.explainAccountError(check.message, check.status) || check.message });
       await sleep(STAR_DELAY_MS);
       continue;
     }
@@ -741,7 +785,11 @@ async function batchFollow({ accountIds, username: usernameInput, action = 'foll
         message: action === 'follow' ? '关注成功' : '已取消关注',
       });
     } else {
-      results.push({ ...base, status: 'failed', message: res.message || `执行失败（HTTP ${res.status}）` });
+      results.push({
+        ...base,
+        status: 'failed',
+        message: github.explainAccountError(res.message, res.status) || res.message || `执行失败（HTTP ${res.status}）`,
+      });
     }
     await sleep(STAR_DELAY_MS);
   }
@@ -920,6 +968,10 @@ async function batchFork({ accountIds, repo: repoInput } = {}) {
       results.push({ ...base, status: 'skipped', message: '该账号没有 Token，已跳过' });
       continue;
     }
+    if (row.status === 'suspended') {
+      results.push({ ...base, status: 'skipped', message: '该账号已被平台封禁/暂停，已跳过' });
+      continue;
+    }
 
     // 精确预检：该账号名下是否已存在同名 fork（fork 默认与源仓库同名）
     if (row.login) {
@@ -954,7 +1006,11 @@ async function batchFork({ accountIds, repo: repoInput } = {}) {
         forkFullName: res.data.full_name,
       });
     } else {
-      results.push({ ...base, status: 'failed', message: res.message || `执行失败（HTTP ${res.status}）` });
+      results.push({
+        ...base,
+        status: 'failed',
+        message: github.explainAccountError(res.message, res.status) || res.message || `执行失败（HTTP ${res.status}）`,
+      });
     }
     await sleep(FORK_DELAY_MS);
   }

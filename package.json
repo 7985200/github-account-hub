@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server/index.js",
     "migrate": "node server/db/migrate.js",
-    "setup:db": "node scripts/setup-db.js"
+    "setup:db": "node scripts/setup-db.js",
+    "test:errors": "node scripts/test-account-errors.js"
   },
   "engines": {
     "node": ">=22.19.0"

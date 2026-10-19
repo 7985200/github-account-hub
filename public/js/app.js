@@ -11,7 +11,8 @@
     unverified: { label: '未验证', cls: 'badge-unverified' },
     invalid: { label: '无效', cls: 'badge-invalid' },
     'password-only': { label: '仅密码凭据', cls: 'badge-password-only' },
-    error: { label: '异常', cls: 'badge-error' }
+    error: { label: '异常', cls: 'badge-error' },
+    suspended: { label: '已封禁', cls: 'badge-suspended' }
   };
 
   var TOKEN_KIND_LABEL = {
@@ -368,6 +369,17 @@
     return '<div class="chips"><span class="chip chip-more">无 Token 权限信息</span></div>';
   }
 
+  /** 已封禁账号的头像丝带（09 红丝带方案，随头像尺寸缩放） */
+  function banSvg(extraClass) {
+    return (
+      '<svg class="avatar-ban' + (extraClass ? ' ' + extraClass : '') + '" viewBox="0 0 96 96" aria-hidden="true">' +
+      '<g transform="rotate(-5 48 70)">' +
+      '<path d="M5 58H91L82 70L91 82H5L14 70Z" fill="#e5484d"></path>' +
+      '<text x="48" y="76.5" text-anchor="middle" font-family="sans-serif" font-weight="700" font-size="19" fill="#ffffff">封</text>' +
+      '</g></svg>'
+    );
+  }
+
   function renderAccountCard(account, withVerified) {
     var id = account.id;
     var st = STATUS_META[account.status] || { label: account.status || '未知', cls: 'badge-unverified' };
@@ -377,10 +389,11 @@
     var avatarUrl = safeUrl(profile.avatarUrl);
     var letter = login.trim().charAt(0).toUpperCase() || '?';
     var name = profile.name || account.email || '未获取资料';
+    var ban = account.status === 'suspended' ? banSvg() : '';
 
     var avatarHtml = avatarUrl
-      ? '<div class="avatar"><img src="' + esc(avatarUrl) + '" alt="" loading="lazy" data-fallback="' + esc(letter) + '"></div>'
-      : '<div class="avatar"><span class="avatar-fallback">' + esc(letter) + '</span></div>';
+      ? '<div class="avatar"><img src="' + esc(avatarUrl) + '" alt="" loading="lazy" data-fallback="' + esc(letter) + '">' + ban + '</div>'
+      : '<div class="avatar"><span class="avatar-fallback">' + esc(letter) + '</span>' + ban + '</div>';
 
     var htmlUrl = safeUrl(profile.htmlUrl) || (account.login ? 'https://github.com/' + encodeURIComponent(account.login) : '');
     var loginHtml = htmlUrl
@@ -1354,7 +1367,7 @@
             .then(function (data) {
               var st = (data.account && data.account.status) || '';
               if (st === 'active') stats.active++;
-              else if (st === 'invalid' || st === 'error') stats.abnormal++;
+              else if (st === 'invalid' || st === 'error' || st === 'suspended') stats.abnormal++;
               else stats.unchanged++;
             })
             .catch(function () {
@@ -1705,7 +1718,7 @@ var STAR_STATUS_META = {
         state.bsAccounts = Array.isArray(data.accounts) ? data.accounts : [];
         state.bsSelected = {};
         state.bsAccounts.forEach(function (a) {
-          if (a.hasToken) state.bsSelected[a.id] = true; /* 可用账号默认全选 */
+          if (a.hasToken && a.status !== 'suspended') state.bsSelected[a.id] = true; /* 可用账号默认全选 */
         });
         renderBatchAccounts();
         updateBatchControls();
@@ -1736,13 +1749,14 @@ var STAR_STATUS_META = {
     var letter = login.trim().charAt(0).toUpperCase() || '?';
     var profile = account.profile || {};
     var avatarUrl = safeUrl(profile.avatarUrl);
+    var ban = account.status === 'suspended' ? banSvg('bs-avatar-ban') : '';
     return avatarUrl
-      ? '<span class="bs-avatar"><img src="' + esc(avatarUrl) + '" alt="" loading="lazy" data-fallback="' + esc(letter) + '"></span>'
-      : '<span class="bs-avatar"><span class="bs-avatar-letter">' + esc(letter) + '</span></span>';
+      ? '<span class="bs-avatar"><img src="' + esc(avatarUrl) + '" alt="" loading="lazy" data-fallback="' + esc(letter) + '">' + ban + '</span>'
+      : '<span class="bs-avatar"><span class="bs-avatar-letter">' + esc(letter) + '</span>' + ban + '</span>';
   }
 
   function batchAccountRowHtml(account, selectedMap) {
-    var canUse = !!account.hasToken;
+    var canUse = !!account.hasToken && account.status !== 'suspended';
     var st = STATUS_META[account.status] || { label: account.status || '未知', cls: 'badge-unverified' };
     var login = account.login || '（未命名）';
     var tokenText = account.hasToken
@@ -1751,8 +1765,10 @@ var STAR_STATUS_META = {
         ? '仅密码凭据'
         : '无凭据';
     var flagHtml = '';
-    if (!canUse) {
+    if (!account.hasToken) {
       flagHtml = '<span class="bs-flag">无 Token，不可选</span>';
+    } else if (account.status === 'suspended') {
+      flagHtml = '<span class="bs-flag bs-flag-dashed">已封禁，不可选</span>';
     } else if (account.status === 'invalid' || account.status === 'error') {
       flagHtml = '<span class="bs-flag bs-flag-dashed">上次验证失败</span>';
     }
@@ -1777,7 +1793,7 @@ var STAR_STATUS_META = {
     var usable = 0;
     var selected = 0;
     state.bsAccounts.forEach(function (a) {
-      if (!a.hasToken) return;
+      if (!a.hasToken || a.status === 'suspended') return;
       usable++;
       if (state.bsSelected[a.id]) selected++;
     });
@@ -1790,7 +1806,7 @@ var STAR_STATUS_META = {
 
   function setAllBatchSelected(sel) {
     state.bsAccounts.forEach(function (a) {
-      if (!a.hasToken) return;
+      if (!a.hasToken || a.status === 'suspended') return;
       if (sel) state.bsSelected[a.id] = true;
       else delete state.bsSelected[a.id];
     });
@@ -1870,7 +1886,7 @@ var STAR_STATUS_META = {
     var repo = (state.bsRepo && state.bsRepo.fullName) || $('#bsRepoInput').value.trim();
     var ids = [];
     state.bsAccounts.forEach(function (a) {
-      if (a.hasToken && state.bsSelected[a.id]) ids.push(a.id);
+      if (a.hasToken && a.status !== 'suspended' && state.bsSelected[a.id]) ids.push(a.id);
     });
     if (!repo || !ids.length) return;
 
@@ -2002,7 +2018,7 @@ var STAR_STATUS_META = {
         state.bfAccounts = Array.isArray(data.accounts) ? data.accounts : [];
         state.bfSelected = {};
         state.bfAccounts.forEach(function (a) {
-          if (a.hasToken) state.bfSelected[a.id] = true; /* 可用账号默认全选 */
+          if (a.hasToken && a.status !== 'suspended') state.bfSelected[a.id] = true; /* 可用账号默认全选 */
         });
         renderFollowAccounts();
         updateFollowControls();
@@ -2032,7 +2048,7 @@ var STAR_STATUS_META = {
     var usable = 0;
     var selected = 0;
     state.bfAccounts.forEach(function (a) {
-      if (!a.hasToken) return;
+      if (!a.hasToken || a.status === 'suspended') return;
       usable++;
       if (state.bfSelected[a.id]) selected++;
     });
@@ -2045,7 +2061,7 @@ var STAR_STATUS_META = {
 
   function setAllFollowSelected(sel) {
     state.bfAccounts.forEach(function (a) {
-      if (!a.hasToken) return;
+      if (!a.hasToken || a.status === 'suspended') return;
       if (sel) state.bfSelected[a.id] = true;
       else delete state.bfSelected[a.id];
     });
@@ -2120,7 +2136,7 @@ var STAR_STATUS_META = {
     var username = (state.bfUser && state.bfUser.login) || '';
     var ids = [];
     state.bfAccounts.forEach(function (a) {
-      if (a.hasToken && state.bfSelected[a.id]) ids.push(a.id);
+      if (a.hasToken && a.status !== 'suspended' && state.bfSelected[a.id]) ids.push(a.id);
     });
     if (!username || !ids.length) return;
 
@@ -2210,7 +2226,7 @@ var STAR_STATUS_META = {
         state.bkAccounts = Array.isArray(data.accounts) ? data.accounts : [];
         state.bkSelected = {};
         state.bkAccounts.forEach(function (a) {
-          if (a.hasToken) state.bkSelected[a.id] = true; /* 可用账号默认全选 */
+          if (a.hasToken && a.status !== 'suspended') state.bkSelected[a.id] = true; /* 可用账号默认全选 */
         });
         renderForkAccounts();
         updateForkControls();
@@ -2240,7 +2256,7 @@ var STAR_STATUS_META = {
     var usable = 0;
     var selected = 0;
     state.bkAccounts.forEach(function (a) {
-      if (!a.hasToken) return;
+      if (!a.hasToken || a.status === 'suspended') return;
       usable++;
       if (state.bkSelected[a.id]) selected++;
     });
@@ -2253,7 +2269,7 @@ var STAR_STATUS_META = {
 
   function setAllForkSelected(sel) {
     state.bkAccounts.forEach(function (a) {
-      if (!a.hasToken) return;
+      if (!a.hasToken || a.status === 'suspended') return;
       if (sel) state.bkSelected[a.id] = true;
       else delete state.bkSelected[a.id];
     });
@@ -2294,7 +2310,7 @@ var STAR_STATUS_META = {
     var repo = (state.bkRepo && state.bkRepo.fullName) || $('#bkRepoInput').value.trim();
     var ids = [];
     state.bkAccounts.forEach(function (a) {
-      if (a.hasToken && state.bkSelected[a.id]) ids.push(a.id);
+      if (a.hasToken && a.status !== 'suspended' && state.bkSelected[a.id]) ids.push(a.id);
     });
     if (!repo || !ids.length) return;
 
@@ -3312,10 +3328,17 @@ var STAR_STATUS_META = {
         var img = event.target;
         if (!img || img.tagName !== 'IMG') return;
         var letter = img.dataset.fallback || '?';
+        /* 只替换 img 本身，保留同一容器里的封禁红丝带 .avatar-ban */
         if (img.closest('.avatar')) {
-          img.parentNode.innerHTML = '<span class="avatar-fallback">' + esc(letter) + '</span>';
+          var fb = document.createElement('span');
+          fb.className = 'avatar-fallback';
+          fb.textContent = letter;
+          img.replaceWith(fb);
         } else if (img.closest('.bs-avatar')) {
-          img.parentNode.innerHTML = '<span class="bs-avatar-letter">' + esc(letter) + '</span>';
+          var fbs = document.createElement('span');
+          fbs.className = 'bs-avatar-letter';
+          fbs.textContent = letter;
+          img.replaceWith(fbs);
         }
       },
       true

@@ -33,8 +33,39 @@ async function ensureDatabase() {
     await conn.changeUser({ database: config.db.database });
     const schema = fs.readFileSync(SCHEMA_FILE, 'utf8');
     await conn.query(schema);
+    await ensureStatusEnum(conn);
   } finally {
     await conn.end();
+  }
+}
+
+/**
+ * 老库的 accounts.status 枚举没有 suspended（账号被平台封禁/暂停）。
+ * 这里做一次幂等 ALTER，避免升级后写入新状态失败。
+ */
+async function ensureStatusEnum(conn) {
+  const [rows] = await conn.query(
+    `SELECT COLUMN_TYPE AS type FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'accounts' AND COLUMN_NAME = 'status'`,
+    [config.db.database]
+  );
+  if (!rows.length) return;
+  const type = String(rows[0].type || '');
+  if (type.includes("'suspended'")) return;
+  try {
+    await conn.query(
+      "ALTER TABLE accounts MODIFY COLUMN status ENUM('unverified','active','invalid','password-only','error','suspended') NOT NULL DEFAULT 'unverified' COMMENT '凭据状态'"
+    );
+    logger.info('accounts.status 枚举已补充 suspended');
+  } catch (err) {
+    if (/denied|access/i.test(String(err.message || ''))) {
+      logger.error(
+        'accounts.status 缺少 suspended，但当前数据库账号无权 ALTER。' +
+          '请用 root 执行一次：ALTER TABLE accounts MODIFY COLUMN status ' +
+          "ENUM('unverified','active','invalid','password-only','error','suspended') NOT NULL DEFAULT 'unverified';"
+      );
+    }
+    throw err;
   }
 }
 
