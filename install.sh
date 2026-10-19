@@ -523,6 +523,14 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; th
   exit 1
 fi
 
+# 监听地址不能包含空白/换行，避免污染 .env
+case "$BIND_IP" in
+  *[[:space:]]*)
+    err "监听地址不能包含空白或换行（当前：$BIND_IP）"
+    exit 1
+    ;;
+esac
+
 # 数据库名/用户：优先 INSTALL_DB_NAME / INSTALL_DB_USER（多实例隔离用），
 # 其次沿用 .env 已有值，最后用默认值。宿主机多实例必须各用各的库+用户，
 # 否则第二个实例改密码会把第一个实例挤下线。
@@ -546,13 +554,30 @@ else
   DB_USER="${EXIST_DB_USER:-ghhub}"
 fi
 
+if ! [[ "$DB_NAME" =~ ^[A-Za-z0-9_]+$ ]]; then
+  err "数据库名只能包含字母、数字和下划线（当前：$DB_NAME）"
+  exit 1
+fi
+if ! [[ "$DB_USER" =~ ^[A-Za-z0-9_]+$ ]]; then
+  err "数据库用户名只能包含字母、数字和下划线（当前：$DB_USER）"
+  exit 1
+fi
+
 # 随机生成数据库密码（除非 .env 里已有）
 if [ -f .env ] && grep -q '^DB_PASSWORD=' .env && ! grep -q '^DB_PASSWORD=$' .env; then
-  DB_PASSWORD="$(grep '^DB_PASSWORD=' .env | head -1 | cut -d= -f2-)"
+  DB_PASSWORD="$(grep '^DB_PASSWORD=' .env | head -1 | cut -d= -f2- | tr -d '\r')"
   ok "沿用 .env 中已有的数据库密码"
 else
   DB_PASSWORD="Ghhub-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-10)-$(date +%s | tail -c 5)"
 fi
+
+# 数据库密码不能包含换行/CR，避免污染 .env
+case "$DB_PASSWORD" in
+  *$'\n'*|*$'\r'*)
+    err "数据库密码不能包含换行或回车"
+    exit 1
+    ;;
+esac
 
 # 旧版 .env 曾保存 MySQL root 密码。新版本不再把它写进项目 .env：
 # 应用运行时只需要 DB_USER/DB_PASSWORD；Docker 的 root 密码在数据卷首次初始化时就固定了，
