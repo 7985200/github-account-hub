@@ -39,9 +39,9 @@ hr()    { printf "%s\n" "${C_DIM}───────────────�
 backup_before_update() {
   local dir="$1"
   local stamp name root ans tmp target
-  local dumped=0 skipdata=0
-  local compose="" cid="" svc="" rootpw="" dbname="" dbuser="" dbpass="" dbhost="" dbport=""
-  local m_user="" m_pass=""
+  local dumped=0 skipdata=0 data_captured=0
+  local compose="" cid="" appcid="" svc="" rootpw="" dbname="" dbuser="" dbpass="" dbhost="" dbport=""
+  local m_user="" m_pass="" data_state=""
 
   stamp="$(date '+%Y年%m月%d日')"
   name="${stamp}备份.zip"
@@ -112,7 +112,7 @@ backup_before_update() {
     warn "未找到 $dir/data 目录，跳过"
   fi
 
-  # 1b) .env：里面有 DB_PASSWORD / MYSQL_ROOT_PASSWORD，
+  # 1b) .env：里面有 DB_PASSWORD（新版不再写 MySQL root 密码），
   #     不备份的话，恢复数据库后密码对不上照样连不上
   if [ -f "$dir/.env" ] && [ "$skipdata" -eq 0 ]; then
     if cp "$dir/.env" "$tmp/.env" 2>/dev/null; then
@@ -168,24 +168,49 @@ backup_before_update() {
     fi
   fi
 
-  if [ -n "$cid" ] && [ -n "$rootpw" ]; then
-    # 用 MYSQL_PWD 传密码，避免口令出现在容器内的进程列表里
-    if docker exec -e MYSQL_PWD="$rootpw" "$cid" \
-         mysqldump -uroot --single-transaction --routines --events "$dbname" \
-         >"$tmp/database.sql" 2>"$tmp/dump.err"; then
-      if [ -s "$tmp/database.sql" ]; then
-        dumped=1
-        ok "已导出数据库（容器 $svc / 库 $dbname / $(du -h "$tmp/database.sql" 2>/dev/null | cut -f1)）"
+  # 2b) Docker 部署：data/ 在 app-data 卷里，宿主机看不到，必须从 app 容器导出
+  if [ -n "$compose" ] && [ -f "$dir/docker-compose.yml" ]; then
+    appcid="$( cd "$dir" 2>/dev/null || exit 0; $compose ps -q app 2>/dev/null | head -1 || true )"
+    if [ -n "$appcid" ]; then
+      if docker exec "$appcid" tar -czf - -C /app/data . >"$tmp/app-data.tgz" 2>"$tmp/app-data.err" && [ -s "$tmp/app-data.tgz" ]; then
+        data_captured=1
+        ok "已收集 app-data 卷（加密密钥与登录态）"
+      else
+        rm -f "$tmp/app-data.tgz"
+        warn "app-data 卷导出失败：$(head -c 160 "$tmp/app-data.err" 2>/dev/null | tr '\n' ' ')"
       fi
     else
-      warn "容器内 mysqldump 失败：$(head -c 200 "$tmp/dump.err" 2>/dev/null | tr '\n' ' ')"
+      warn "未找到运行中的 app 容器，无法导出 app-data 卷（密钥可能在卷里）"
+    fi
+  fi
+
+  if [ -n "$cid" ]; then
+    # 先用 .env 里的 root 密码。Docker 数据卷一旦初始化，root 密码就固定了；
+    # 旧版 install.sh 重跑时可能把 .env 改成新的随机值 → 这里 Access denied 很常见。
+    # 失败时回退到应用账号（对本库有全部权限，密码由 DB_PASSWORD 保证正确）。
+    if [ -n "$rootpw" ] && docker exec -e MYSQL_PWD="$rootpw" "$cid" \
+         mysqldump -uroot --single-transaction --routines --events "$dbname" \
+         >"$tmp/database.sql" 2>"$tmp/dump.err" && [ -s "$tmp/database.sql" ]; then
+      dumped=1
+      ok "已导出数据库（root / 容器 $svc / 库 $dbname / $(du -h "$tmp/database.sql" 2>/dev/null | cut -f1)）"
+    else
+      warn "容器内 root 导出失败：$(head -c 160 "$tmp/dump.err" 2>/dev/null | tr '\n' ' ')"
       rm -f "$tmp/database.sql"
+      if [ -n "$dbpass" ] && docker exec -e MYSQL_PWD="$dbpass" "$cid" \
+           mysqldump -u"${dbuser:-ghhub}" --single-transaction --no-tablespaces --default-character-set=utf8mb4 "$dbname" \
+           >"$tmp/database.sql" 2>"$tmp/dump.err" && [ -s "$tmp/database.sql" ]; then
+        dumped=1
+        ok "已改用应用账号导出数据库（容器 $svc / 库 $dbname / $(du -h "$tmp/database.sql" 2>/dev/null | cut -f1)）"
+      else
+        warn "容器内应用账号导出也失败：$(head -c 160 "$tmp/dump.err" 2>/dev/null | tr '\n' ' ')"
+        rm -f "$tmp/database.sql"
+      fi
     fi
   fi
 
   # 4) 宿主机部署：本机有 mysqldump 就优先用它（一致性远好于直接复制正在写入的数据目录）
-  #    注意：.env 的 MYSQL_ROOT_PASSWORD 只属于 Docker 容器，与宿主机真实 root 密码无关，
-  #    不能拿它覆盖应用账号凭据 —— 应用账号对本库有全部权限，足以导出。
+  #    注意：旧版 .env 可能残留 MYSQL_ROOT_PASSWORD（新版已不再写入），它只属于 Docker 容器；
+  #    宿主机真实 root 密码与它无关，不能拿它覆盖应用账号凭据 —— 应用账号对本库有全部权限，足以导出。
   if [ "$dumped" -eq 0 ] && command -v mysqldump >/dev/null 2>&1; then
     m_user="${dbuser:-root}"
     m_pass="$dbpass"
@@ -220,11 +245,14 @@ backup_before_update() {
   fi
 
   # 6) 元信息，便于日后确认对应哪个版本
+  data_state="未包含"
+  if [ "$data_captured" -eq 1 ] || [ -d "$dir/data" ]; then data_state="已包含"; fi
   {
     echo "备份时间: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "项目目录: $dir"
     echo "数据库名: $dbname"
     echo "数据库备份: $([ "$dumped" -eq 1 ] && echo 已包含 || echo 未包含（需手动导出）)"
+    echo "data 备份: $data_state"
     echo "代码版本: $(cd "$dir" 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
   } >"$tmp/BACKUP-INFO.txt" 2>/dev/null || true
 
@@ -234,6 +262,7 @@ backup_before_update() {
 
 包含内容
   data/         加密密钥 secret.key 与网页登录态（最关键，丢了已保存的 Token 就解不开）
+  app-data.tgz  仅 Docker 部署：从 app-data 卷导出的 data/ 打包（等同 data/）
   .env          数据库口令与配置（等同密码文件，注意保管）
   database.sql  数据库导出（账号、日志等数据都在这）
   mysql-data/   仅宿主机免安装版 MySQL 才会有的数据目录副本
@@ -242,11 +271,15 @@ backup_before_update() {
   1) 停止服务
        docker compose down
   2) 还原数据目录与配置
-       rm -rf data && cp -a <解压目录>/data ./data
+       Docker 部署：用 app-data.tgz 还原卷（示例卷名 <项目名>_app-data）：
+         docker run --rm -v <项目名>_app-data:/data -v <解压目录>:/backup alpine \
+           sh -c 'cd /data && tar -xzf /backup/app-data.tgz'
+       宿主机部署：
+         rm -rf data && cp -a <解压目录>/data ./data
        cp <解压目录>/.env ./.env
   3) 启动数据库并导入（<库名> 见 BACKUP-INFO.txt，一般是 $dbname）
        docker compose up -d mysql
-       docker compose exec -T mysql sh -c 'exec mysql -uroot -p"\$MYSQL_ROOT_PASSWORD" <库名>' < <解压目录>/database.sql
+       docker compose exec -T mysql sh -c 'exec mysql -u"\$MYSQL_USER" -p"\$MYSQL_PASSWORD" "\$MYSQL_DATABASE"' < <解压目录>/database.sql
   4) 重建并启动应用
        docker compose up -d --build
 
@@ -294,6 +327,12 @@ RESTORE
   rmdir "$root/.ghhub-bktmp" 2>/dev/null || true
   if [ -f "$target" ]; then
     ok "备份大小：$( { du -h "$target" 2>/dev/null || true; } | cut -f1 || true)"
+  fi
+  if [ "$dumped" -eq 0 ]; then
+    warn "⚠ 本次归档不含数据库，不能作为唯一恢复依据；请按上面的提示手动导出后再升级"
+  fi
+  if [ "$data_captured" -eq 0 ] && [ ! -d "$dir/data" ] && [ -n "$compose" ]; then
+    warn "⚠ 本次归档未包含 data/（加密密钥），请单独备份 app-data 卷"
   fi
   return 0
 }
@@ -515,13 +554,19 @@ else
   DB_PASSWORD="Ghhub-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-10)-$(date +%s | tail -c 5)"
 fi
 
-# Docker 数据卷只在首次初始化时读取 MYSQL_ROOT_PASSWORD；重跑必须沿用旧值，
-# 否则 .env 里的 root 密码与卷内实际密码不一致，备份/恢复都会认证失败
-if [ -f .env ] && grep -q '^MYSQL_ROOT_PASSWORD=.' .env; then
-  MYSQL_ROOT_PASSWORD="$(grep '^MYSQL_ROOT_PASSWORD=' .env | head -1 | cut -d= -f2- | tr -d '\r')"
-  ok "沿用 .env 中已有的 MySQL root 密码"
-else
-  MYSQL_ROOT_PASSWORD="Root-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-10)"
+# 旧版 .env 曾保存 MySQL root 密码。新版本不再把它写进项目 .env：
+# 应用运行时只需要 DB_USER/DB_PASSWORD；Docker 的 root 密码在数据卷首次初始化时就固定了，
+# 迁移到仅 root 可读的家目录文件，避免升级后彻底丢失 root 维护入口。
+LEGACY_ROOT_PW=""
+if [ "$MODE" = 1 ] && [ -f .env ]; then
+  LEGACY_ROOT_PW="$( { grep -E '^MYSQL_ROOT_PASSWORD=.' .env 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '\r' )"
+fi
+if [ -n "$LEGACY_ROOT_PW" ]; then
+  umask 077
+  printf '%s\n' "$LEGACY_ROOT_PW" >"$HOME/.ghhub-mysql-root"
+  chmod 600 "$HOME/.ghhub-mysql-root" 2>/dev/null || true
+  umask 022
+  warn "旧 .env 中的 MySQL root 密码已迁移到 $HOME/.ghhub-mysql-root（不再写入项目 .env）"
 fi
 
 step "配置确认"
@@ -562,7 +607,8 @@ DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
 DB_NAME=$DB_NAME
 DB_POOL_SIZE=10
-MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+# MySQL root 密码默认不落盘：Docker 首次初始化随机生成，可在 `docker compose logs mysql` 查看一次。
+# 如确需固定 root 密码，请按 docker-compose.yml 里的注释修改（不推荐，备份/迁移都不需要它）。
 
 # ---------- 存储 / 日志 ----------
 DATA_DIR=data

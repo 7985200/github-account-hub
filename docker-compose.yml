@@ -17,7 +17,10 @@ services:
     # 不指定 container_name：容器名按项目名（目录名）自动生成，支持同机多实例并存
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-root-2026}
+      # 默认不保存 root 密码：首次初始化由 MySQL 随机生成，只打印在
+      # `docker compose logs mysql` 里一次。需要固定 root 密码时，把下面这行换成
+      # MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}（并在 .env 自行配置，风险自负）。
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
       MYSQL_DATABASE: ${DB_NAME:-github_hub}
       MYSQL_USER: ${DB_USER:-ghhub}
       MYSQL_PASSWORD: ${DB_PASSWORD:-change-ghhub-2026}
@@ -29,7 +32,8 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      # mysqladmin ping 不依赖认证（Access denied 也返回 0），因此不需要 root 密码
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
       interval: 5s
       timeout: 5s
       retries: 24

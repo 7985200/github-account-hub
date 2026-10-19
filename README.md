@@ -70,11 +70,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/7985200/github-account-hub/m
 
 ```bash
 git clone https://github.com/7985200/github-account-hub.git && cd github-account-hub
-cp .env.example .env        # 编辑 .env：修改 DB_PASSWORD / MYSQL_ROOT_PASSWORD
+cp .env.example .env        # 编辑 .env：至少修改 DB_PASSWORD
 docker compose up -d --build
 ```
 
 - MySQL 容器首次启动自动创建数据库与应用账号，建表由应用启动时的自动迁移完成，**无需执行 setup-db.js**
+- MySQL root 密码默认**不写入 `.env`**：首次初始化由 MySQL 随机生成，只打印在 `docker compose logs mysql` 里一次；应用和备份都只使用权限受限的应用账号（`DB_USER`）
 - 数据持久化：`mysql-data` 卷（数据库）+ `app-data` 卷（加密密钥 `data/secret.key`），升级镜像不丢数据
 - 端口/绑定地址：`.env` 里的 `PORT` 与 `BIND_IP`（`BIND_IP=127.0.0.1` 时仅本机可访问，配合反代）
 - 常用命令：
@@ -83,8 +84,10 @@ docker compose up -d --build
 docker compose logs -f app        # 查看应用日志
 docker compose ps                 # 容器状态
 docker compose down               # 停止（数据保留在卷中）
-# 备份数据库：
-docker compose exec mysql mysqldump -u root -p"你的root密码" github_hub > backup.sql
+# 备份数据库（用应用账号，无需 root；先加载 .env 里的 DB_* 变量）：
+set -a; . ./.env; set +a
+docker compose exec -T -e MYSQL_PWD="$DB_PASSWORD" mysql \
+  mysqldump -u"$DB_USER" --single-transaction --no-tablespaces "$DB_NAME" > backup.sql
 ```
 
 ### 方式三：宿主机手动部署
@@ -141,6 +144,7 @@ npm start                         # 启动，默认 http://127.0.0.1:24524
 ## 安全说明
 
 - GitHub 凭据（Token / 密码）以 **AES-256-GCM** 加密后入库，密钥存放于独立文件 `data/secret.key`（默认权限 0600），与数据库分离；接口永不返回明文密文，仅在「查看/复制」时解密。
+- **不在 `.env` 保存 MySQL root 密码**：Docker 首次初始化随机生成，应用与备份只使用仅限本库权限的应用账号；宿主机模式只在初始化时向用户询问 root 密码，不落盘。
 - 「密码换 Token」的密码**不落库、不写日志**，仅用于本次网页登录换取 Token。
 - 管理员密码使用 **scrypt** 加盐哈希存储；登录会话为 32 字节随机 token（httpOnly + SameSite=Strict Cookie），改密即全端失效。
 - 登录失败限速：同一 IP 15 分钟内失败 10 次锁定 15 分钟。
