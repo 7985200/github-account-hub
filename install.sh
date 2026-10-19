@@ -607,7 +607,7 @@ DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
 DB_NAME=$DB_NAME
 DB_POOL_SIZE=10
-# MySQL root 密码默认不落盘：Docker 首次初始化随机生成，可在 `docker compose logs mysql` 查看一次。
+# MySQL root 密码默认不落盘：Docker 首次初始化随机生成，可在 docker compose logs mysql 查看一次。
 # 如确需固定 root 密码，请按 docker-compose.yml 里的注释修改（不推荐，备份/迁移都不需要它）。
 
 # ---------- 存储 / 日志 ----------
